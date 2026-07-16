@@ -384,8 +384,8 @@ export default function SetupScreen({ onStart, initialApiConfig, initialLanguage
     onStart(topic.trim(), selected, {
       provider: finalProvider,
       key: apiKey.trim(),
-      baseUrl: apiBaseUrl.trim(),
-      model: apiModel.trim() || 'gpt-4o'
+      baseUrl: apiBaseUrl.trim() || undefined,
+      model: apiModel.trim() || undefined
     }, lang);
   };
 
@@ -628,7 +628,7 @@ export default function SetupScreen({ onStart, initialApiConfig, initialLanguage
                 <button
                   type="button"
                   onClick={handleTestConnection}
-                  disabled={testStatus === 'testing' || !apiKey}
+                  disabled={testStatus === 'testing'}
                   className="px-4 py-2 text-sm font-medium text-neutral-700 bg-neutral-100 hover:bg-neutral-200 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                 >
                   {testStatus === 'testing' ? (

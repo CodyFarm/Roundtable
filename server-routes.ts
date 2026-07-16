@@ -9,19 +9,61 @@ export function createApp() {
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-  // Helper to parse config
+  // Helper to parse config. Falls back to server-side environment variables
+  // when the frontend does not provide an API key, model, or base URL.
   const getApiConfig = (req: express.Request) => {
+    const providerKeyEnv: Record<string, string | undefined> = {
+      gemini: process.env.GEMINI_API_KEY,
+      openai: process.env.OPENAI_API_KEY,
+      anthropic: process.env.ANTHROPIC_API_KEY,
+      deepseek: process.env.DEEPSEEK_API_KEY,
+      custom: process.env.CUSTOM_API_KEY,
+    };
+
+    const providerModelEnv: Record<string, string | undefined> = {
+      gemini: undefined,
+      openai: process.env.OPENAI_API_MODEL,
+      anthropic: process.env.ANTHROPIC_API_MODEL,
+      deepseek: process.env.DEEPSEEK_API_MODEL,
+      custom: process.env.CUSTOM_API_MODEL,
+    };
+
+    const providerBaseUrlEnv: Record<string, string | undefined> = {
+      gemini: undefined,
+      openai: process.env.OPENAI_API_BASE_URL,
+      anthropic: undefined,
+      deepseek: process.env.DEEPSEEK_API_BASE_URL,
+      custom: process.env.CUSTOM_API_BASE_URL,
+    };
+
     try {
       const configStr = req.headers["x-api-config"] as string;
       if (configStr) {
         const parsed = JSON.parse(configStr);
-        if (parsed.provider === 'gemini' && !parsed.key) {
-          parsed.key = process.env.GEMINI_API_KEY;
+        const provider = parsed.provider || process.env.DEFAULT_API_PROVIDER || 'gemini';
+        parsed.provider = provider;
+
+        if (!parsed.key) {
+          parsed.key = providerKeyEnv[provider];
         }
+        if (!parsed.model && providerModelEnv[provider]) {
+          parsed.model = providerModelEnv[provider];
+        }
+        if (!parsed.baseUrl && providerBaseUrlEnv[provider]) {
+          parsed.baseUrl = providerBaseUrlEnv[provider];
+        }
+
         return parsed;
       }
     } catch(e) {}
-    return { provider: 'gemini', key: process.env.GEMINI_API_KEY };
+
+    const fallbackProvider = process.env.DEFAULT_API_PROVIDER || 'gemini';
+    return {
+      provider: fallbackProvider,
+      key: providerKeyEnv[fallbackProvider],
+      model: providerModelEnv[fallbackProvider],
+      baseUrl: providerBaseUrlEnv[fallbackProvider],
+    };
   };
 
   const retrieveRelevantChunks = (fileContent: string, query: string, maxChars: number = 1000): string => {
