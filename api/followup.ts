@@ -1,2 +1,2 @@
-import { createApp } from "./server-routes";
+import { createApp } from "./server-routes-lite";
 export default createApp();
