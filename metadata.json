@@ -1,0 +1,6 @@
+{
+  "name": "哲学人的圆桌",
+  "description": "一个在线哲学辩论平台，用户可以邀请历史上的哲学家进行虚拟圆桌对话。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
