@@ -1,7 +1,37 @@
 import express from "express";
-import { GoogleGenAI, Type } from "@google/genai";
-import OpenAI from "openai";
-import Anthropic from "@anthropic-ai/sdk";
+
+// ── Lazy-load AI SDKs ──────────────────────────────────────────────────
+// On Vercel serverless functions, eagerly importing all three SDKs in one
+// bundle causes FUNCTION_INVOCATION_FAILED (memory / cold-start timeout).
+// We defer loading to per-request time so only the SDK actually needed is
+// loaded into memory.
+
+let _openaiModule: any;
+let _anthropicModule: any;
+let _googleModule: any;
+
+async function getOpenAI() {
+  if (!_openaiModule) {
+    const mod = await import("openai");
+    _openaiModule = mod.default;
+  }
+  return _openaiModule;
+}
+
+async function getAnthropic() {
+  if (!_anthropicModule) {
+    const mod = await import("@anthropic-ai/sdk");
+    _anthropicModule = mod.default;
+  }
+  return _anthropicModule;
+}
+
+async function getGoogleModule() {
+  if (!_googleModule) {
+    _googleModule = await import("@google/genai");
+  }
+  return _googleModule;
+}
 
 export function createApp() {
   const app = express();
@@ -188,6 +218,7 @@ Also, analyze the relationship of this new message to previous messages (e.g., a
     if (!config.key) {
       throw new Error("Missing API Key. Please provide a Gemini API Key in the setup screen, or configure the GEMINI_API_KEY environment variable.");
     }
+    const { GoogleGenAI, Type } = await getGoogleModule();
     const ai = new GoogleGenAI({
       apiKey: config.key,
       httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
@@ -247,7 +278,8 @@ Also, analyze the relationship of this new message to previous messages (e.g., a
       if (!config.baseUrl) baseURL = "https://api.deepseek.com/v1";
     }
 
-    const openai = new OpenAI({
+    const OpenAIClass = await getOpenAI();
+    const openai = new OpenAIClass({
       apiKey: config.key,
       baseURL: baseURL,
     });
@@ -287,7 +319,8 @@ Also, analyze the relationship of this new message to previous messages (e.g., a
     if (!config.key) {
       throw new Error("Missing API Key. Please provide an Anthropic API Key in the setup screen.");
     }
-    const anthropic = new Anthropic({ apiKey: config.key });
+    const AnthropicClass = await getAnthropic();
+    const anthropic = new AnthropicClass({ apiKey: config.key });
     let model = config.model || "claude-3-5-sonnet-20241022";
     let thinkingConfig: any = undefined;
     let maxTokens = 1500;
@@ -363,7 +396,8 @@ Also, analyze the relationship of this new message to previous messages (e.g., a
         if (config.provider === 'deepseek' && !config.model) model = "deepseek-chat";
         if (config.provider === 'deepseek' && !config.baseUrl) baseURL = "https://api.deepseek.com/v1";
 
-        const openai = new OpenAI({ apiKey: config.key, baseURL });
+        const OpenAIClass = await getOpenAI();
+    const openai = new OpenAIClass({ apiKey: config.key, baseURL });
         const response = await openai.chat.completions.create({
           model: model,
           messages: [
@@ -372,7 +406,8 @@ Also, analyze the relationship of this new message to previous messages (e.g., a
         });
         questions = extractJson(response.choices[0].message.content || "{}").questions || [];
       } else if (config.provider === 'anthropic') {
-        const anthropic = new Anthropic({ apiKey: config.key });
+        const AnthropicClass = await getAnthropic();
+    const anthropic = new AnthropicClass({ apiKey: config.key });
         const response = await anthropic.messages.create({
           model: config.model || "claude-3-5-sonnet-20241022",
           max_tokens: 500,
@@ -383,7 +418,8 @@ Also, analyze the relationship of this new message to previous messages (e.g., a
         const textResponse = response.content.filter(c => c.type === 'text').map((c: any) => c.text).join("");
         questions = extractJson(textResponse || "{}").questions || [];
       } else {
-        const ai = new GoogleGenAI({ apiKey: config.key });
+        const { GoogleGenAI: GG, Type } = await getGoogleModule();
+    const ai = new GG({ apiKey: config.key });
         const response = await ai.models.generateContent({
           model: "gemini-3.5-flash",
           contents: prompt,
@@ -419,14 +455,16 @@ Also, analyze the relationship of this new message to previous messages (e.g., a
         if (config.provider === 'deepseek' && !config.model) model = "deepseek-chat";
         if (config.provider === 'deepseek' && !config.baseUrl) baseURL = "https://api.deepseek.com/v1";
 
-        const openai = new OpenAI({ apiKey: config.key, baseURL });
+        const OpenAIClass = await getOpenAI();
+    const openai = new OpenAIClass({ apiKey: config.key, baseURL });
         const response = await openai.chat.completions.create({
           model: model,
           messages: [{ role: "user", content: prompt }]
         });
         tocText = response.choices[0].message.content;
       } else if (config.provider === 'anthropic') {
-        const anthropic = new Anthropic({ apiKey: config.key });
+        const AnthropicClass = await getAnthropic();
+    const anthropic = new AnthropicClass({ apiKey: config.key });
         const response = await anthropic.messages.create({
           model: config.model || "claude-3-5-sonnet-20241022",
           max_tokens: 1000,
@@ -436,7 +474,8 @@ Also, analyze the relationship of this new message to previous messages (e.g., a
         });
         tocText = response.content.filter(c => c.type === 'text').map((c: any) => c.text).join("");
       } else {
-        const ai = new GoogleGenAI({ apiKey: config.key });
+        const { GoogleGenAI: GG, Type } = await getGoogleModule();
+    const ai = new GG({ apiKey: config.key });
         const response = await ai.models.generateContent({
           model: "gemini-3.5-flash",
           contents: prompt,
@@ -470,14 +509,16 @@ Also, analyze the relationship of this new message to previous messages (e.g., a
         if (config.provider === 'deepseek' && !config.model) model = "deepseek-chat";
         if (config.provider === 'deepseek' && !config.baseUrl) baseURL = "https://api.deepseek.com/v1";
 
-        const openai = new OpenAI({ apiKey: config.key, baseURL });
+        const OpenAIClass = await getOpenAI();
+    const openai = new OpenAIClass({ apiKey: config.key, baseURL });
         const response = await openai.chat.completions.create({
           model: model,
           messages: [{ role: "user", content: prompt }]
         });
         summaryText = response.choices[0].message.content;
       } else if (config.provider === 'anthropic') {
-        const anthropic = new Anthropic({ apiKey: config.key });
+        const AnthropicClass = await getAnthropic();
+    const anthropic = new AnthropicClass({ apiKey: config.key });
         const response = await anthropic.messages.create({
           model: config.model || "claude-3-5-sonnet-20241022",
           max_tokens: 1500,
@@ -487,7 +528,8 @@ Also, analyze the relationship of this new message to previous messages (e.g., a
         });
         summaryText = response.content.filter(c => c.type === 'text').map((c: any) => c.text).join("");
       } else {
-        const ai = new GoogleGenAI({ apiKey: config.key });
+        const { GoogleGenAI: GG, Type } = await getGoogleModule();
+    const ai = new GG({ apiKey: config.key });
         const response = await ai.models.generateContent({
           model: "gemini-3.5-flash",
           contents: prompt,
@@ -519,7 +561,8 @@ Also, analyze the relationship of this new message to previous messages (e.g., a
         if (config.provider === 'deepseek' && !config.model) model = "deepseek-chat";
         if (config.provider === 'deepseek' && !config.baseUrl) baseURL = "https://api.deepseek.com/v1";
 
-        const openai = new OpenAI({ apiKey: config.key, baseURL });
+        const OpenAIClass = await getOpenAI();
+    const openai = new OpenAIClass({ apiKey: config.key, baseURL });
         const response = await openai.chat.completions.create({
           model: model,
           messages: [{ role: "user", content: prompt }]
@@ -527,7 +570,8 @@ Also, analyze the relationship of this new message to previous messages (e.g., a
         text = response.choices[0].message.content;
         tokensUsed = response.usage?.total_tokens;
       } else if (config.provider === 'anthropic') {
-        const anthropic = new Anthropic({ apiKey: config.key });
+        const AnthropicClass = await getAnthropic();
+    const anthropic = new AnthropicClass({ apiKey: config.key });
         const response = await anthropic.messages.create({
           model: config.model || "claude-3-5-sonnet-20241022",
           max_tokens: 1000,
@@ -538,7 +582,8 @@ Also, analyze the relationship of this new message to previous messages (e.g., a
         text = response.content.filter(c => c.type === 'text').map((c: any) => c.text).join("");
         tokensUsed = response.usage?.output_tokens;
       } else {
-        const ai = new GoogleGenAI({ apiKey: config.key });
+        const { GoogleGenAI: GG, Type } = await getGoogleModule();
+    const ai = new GG({ apiKey: config.key });
         const response = await ai.models.generateContent({
           model: "gemini-3.5-flash",
           contents: prompt,
@@ -571,21 +616,24 @@ Also, analyze the relationship of this new message to previous messages (e.g., a
           if (!config.baseUrl) baseURL = "https://api.deepseek.com/v1";
         }
 
-        const openai = new OpenAI({ apiKey: config.key, baseURL });
+        const OpenAIClass = await getOpenAI();
+    const openai = new OpenAIClass({ apiKey: config.key, baseURL });
         await openai.chat.completions.create({
           model: model,
           messages: [{ role: "user", content: "Hi" }],
           max_tokens: 5,
         });
       } else if (config.provider === 'anthropic') {
-        const anthropic = new Anthropic({ apiKey: config.key });
+        const AnthropicClass = await getAnthropic();
+    const anthropic = new AnthropicClass({ apiKey: config.key });
         await anthropic.messages.create({
           model: config.model || "claude-3-5-sonnet-20241022",
           max_tokens: 5,
           messages: [{ role: "user", content: "Hi" }]
         });
       } else {
-        const ai = new GoogleGenAI({ apiKey: config.key });
+        const { GoogleGenAI: GG, Type } = await getGoogleModule();
+    const ai = new GG({ apiKey: config.key });
         await ai.models.generateContent({
           model: "gemini-3.5-flash",
           contents: "Hi",
