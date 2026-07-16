@@ -1,20 +1,22 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# Philosopher's Roundtable
 
-# Run and deploy your AI Studio app
-
-This contains everything you need to run your app locally.
-
-View your app in AI Studio: https://ai.studio/apps/abbb0e65-8a12-474d-8ce5-d2f1c3e26f2d
+A React + Express app for hosting AI-powered philosophical roundtable discussions.
 
 ## Run Locally
 
-**Prerequisites:**  Node.js
-
+**Prerequisites:** Node.js
 
 1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
+   ```bash
+   npm install
+   ```
+2. Copy `.env.example` to `.env.local` and set your `GEMINI_API_KEY`:
+   ```bash
+   cp .env.example .env.local
+   ```
 3. Run the app:
-   `npm run dev`
+   ```bash
+   npm run dev
+   ```
+
+The dev server will start via `tsx server.ts`, serving both the Express API and the Vite React frontend.
