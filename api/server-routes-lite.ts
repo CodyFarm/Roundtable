@@ -1,5 +1,4 @@
 import express from "express";
-import OpenAI from "openai";
 
 // ── Vercel-lite ────────────────────────────────────────────────────────
 // Only bundles the openai SDK. DeepSeek uses the OpenAI-compatible API.
@@ -7,6 +6,15 @@ import OpenAI from "openai";
 // serverless function bundle under Vercel's size limit.
 // For full provider support, use the local dev server (server.ts) which
 // imports the complete api/server-routes.ts.
+
+let _openaiModule: any;
+async function getOpenAI() {
+  if (!_openaiModule) {
+    const mod = await import("openai");
+    _openaiModule = mod.default;
+  }
+  return _openaiModule;
+}
 
 export function createApp() {
   const app = express();
@@ -189,7 +197,7 @@ Also, analyze the relationship of this new message to previous messages (e.g., a
 
   const getSocraticInstruction = (topic: string, language: string) => `Based on the current discussion about "${topic}", generate 3 Socratic, thought-provoking questions that the user could ask to deepen the debate. Keep them concise. Generate questions in ${language === 'zh' ? 'Chinese' : 'English'}.`;
 
-  const generateChatGemini = async () => { throw new Error("Gemini is not available on this deployment."); };
+  const generateChatGemini = async (_config?: any, _prompt?: string, _instruction?: string) => { throw new Error("Gemini is not available on this deployment."); };
 
   const extractJson = (text: string) => {
     try {
@@ -214,7 +222,7 @@ Also, analyze the relationship of this new message to previous messages (e.g., a
       if (!config.baseUrl) baseURL = "https://api.deepseek.com/v1";
     }
 
-    const openai = new OpenAI({
+    const openai = new (await getOpenAI())({
       apiKey: config.key,
       baseURL: baseURL,
     });
@@ -250,7 +258,7 @@ Also, analyze the relationship of this new message to previous messages (e.g., a
     return parsed;
   };
 
-  const generateChatAnthropic = async () => { throw new Error("Anthropic is not available on this deployment."); };
+  const generateChatAnthropic = async (_config?: any, _prompt?: string, _instruction?: string) => { throw new Error("Anthropic is not available on this deployment."); };
 
   app.post("/api/chat", async (req, res) => {
     try {
@@ -299,7 +307,7 @@ Also, analyze the relationship of this new message to previous messages (e.g., a
         if (config.provider === 'deepseek' && !config.model) model = "deepseek-chat";
         if (config.provider === 'deepseek' && !config.baseUrl) baseURL = "https://api.deepseek.com/v1";
 
-        const openai = new OpenAI({ apiKey: config.key, baseURL });
+        const openai = new (await getOpenAI())({ apiKey: config.key, baseURL });
         const response = await openai.chat.completions.create({
           model: model,
           messages: [
@@ -337,7 +345,7 @@ Also, analyze the relationship of this new message to previous messages (e.g., a
         if (config.provider === 'deepseek' && !config.model) model = "deepseek-chat";
         if (config.provider === 'deepseek' && !config.baseUrl) baseURL = "https://api.deepseek.com/v1";
 
-        const openai = new OpenAI({ apiKey: config.key, baseURL });
+        const openai = new (await getOpenAI())({ apiKey: config.key, baseURL });
         const response = await openai.chat.completions.create({
           model: model,
           messages: [{ role: "user", content: prompt }]
@@ -375,7 +383,7 @@ Also, analyze the relationship of this new message to previous messages (e.g., a
         if (config.provider === 'deepseek' && !config.model) model = "deepseek-chat";
         if (config.provider === 'deepseek' && !config.baseUrl) baseURL = "https://api.deepseek.com/v1";
 
-        const openai = new OpenAI({ apiKey: config.key, baseURL });
+        const openai = new (await getOpenAI())({ apiKey: config.key, baseURL });
         const response = await openai.chat.completions.create({
           model: model,
           messages: [{ role: "user", content: prompt }]
@@ -411,7 +419,7 @@ Also, analyze the relationship of this new message to previous messages (e.g., a
         if (config.provider === 'deepseek' && !config.model) model = "deepseek-chat";
         if (config.provider === 'deepseek' && !config.baseUrl) baseURL = "https://api.deepseek.com/v1";
 
-        const openai = new OpenAI({ apiKey: config.key, baseURL });
+        const openai = new (await getOpenAI())({ apiKey: config.key, baseURL });
         const response = await openai.chat.completions.create({
           model: model,
           messages: [{ role: "user", content: prompt }]
@@ -448,7 +456,7 @@ Also, analyze the relationship of this new message to previous messages (e.g., a
           if (!config.baseUrl) baseURL = "https://api.deepseek.com/v1";
         }
 
-        const openai = new OpenAI({ apiKey: config.key, baseURL });
+        const openai = new (await getOpenAI())({ apiKey: config.key, baseURL });
         await openai.chat.completions.create({
           model: model,
           messages: [{ role: "user", content: "Hi" }],
@@ -456,11 +464,6 @@ Also, analyze the relationship of this new message to previous messages (e.g., a
         });
       } else if (config.provider === 'anthropic') {
         throw new Error("Anthropic is not available on this deployment.");
-        await anthropic.messages.create({
-          model: config.model || "claude-3-5-sonnet-20241022",
-          max_tokens: 5,
-          messages: [{ role: "user", content: "Hi" }]
-        });
       } else {
         throw new Error("Gemini is not available on this deployment."); // gemini
       }
