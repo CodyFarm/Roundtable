@@ -7,7 +7,7 @@ export default function App() {
   const [stage, setStage] = useState<Stage>('setup');
   const [topic, setTopic] = useState('');
   const [philosophers, setPhilosophers] = useState<Philosopher[]>([]);
-  const [apiConfig, setApiConfig] = useState<ApiConfig>({ provider: 'gemini', key: '' });
+  const [apiConfig, setApiConfig] = useState<ApiConfig>({ provider: 'deepseek', key: '' });
   const [messages, setMessages] = useState<Message[]>([]);
   const [summaries, setSummaries] = useState<Summary[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -19,17 +19,21 @@ export default function App() {
     const savedConfig = localStorage.getItem('api_config');
     if (savedConfig) {
       try {
-        setApiConfig(JSON.parse(savedConfig));
+        const parsed = JSON.parse(savedConfig);
+        // Migrate old gemini default to deepseek
+        if (!parsed.provider || parsed.provider === 'gemini') {
+          parsed.provider = 'deepseek';
+        }
+        setApiConfig(parsed);
       } catch (e) {
-        // Fallback for old simple key
         const savedKey = localStorage.getItem('gemini_api_key');
-        if (savedKey) setApiConfig({ provider: 'gemini', key: savedKey });
+        if (savedKey) setApiConfig({ provider: 'deepseek', key: savedKey });
       }
     } else {
         const savedKey = localStorage.getItem('gemini_api_key');
-        if (savedKey) setApiConfig({ provider: 'gemini', key: savedKey });
+        if (savedKey) setApiConfig({ provider: 'deepseek', key: savedKey });
     }
-    
+
     const savedLang = localStorage.getItem('app_language');
     if (savedLang === 'zh' || savedLang === 'en') {
       setLanguage(savedLang);

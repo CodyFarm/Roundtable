@@ -16,7 +16,7 @@ interface Props {
 export default function SetupScreen({ onStart, initialApiConfig, initialLanguage }: Props) {
   const [topic, setTopic] = useState('');
   
-  const [apiProvider, setApiProvider] = useState<ApiProvider>(initialApiConfig.provider || 'gemini');
+  const [apiProvider, setApiProvider] = useState<ApiProvider>(initialApiConfig.provider || 'deepseek');
   const [apiKey, setApiKey] = useState(initialApiConfig.key || '');
   const [apiBaseUrl, setApiBaseUrl] = useState(initialApiConfig.baseUrl || '');
   const [apiModel, setApiModel] = useState(initialApiConfig.model || '');
