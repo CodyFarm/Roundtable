@@ -20,6 +20,9 @@ export interface Philosopher {
   descriptionEn: string;
   color: string;
   isCustom?: boolean;
+  isShared?: boolean;
+  sharedBy?: string;
+  createdBy?: string;
   customPrompt?: string;
   fileContent?: string;
 }
@@ -69,4 +72,28 @@ export interface SavedSession {
   stage: Stage;
   messages: Message[];
   summaries: Summary[];
+}
+
+// ── Auth & Account ─────────────────────────────────────────────────────
+
+export interface UserInfo {
+  id: string;
+  username: string;
+  token: string;
+}
+
+export interface SharedPhilosopherEntry {
+  id: string;
+  userId: string;
+  username: string;
+  philosopher: Philosopher;
+  createdAt: string;
+}
+
+export interface SharedSessionEntry {
+  id: string;
+  userId: string;
+  username: string;
+  session: SavedSession;
+  createdAt: string;
 }

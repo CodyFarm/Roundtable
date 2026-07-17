@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
-import { Stage, Philosopher, Message, Role, Relation, ApiConfig, Language, Summary } from '../types';
+import { Stage, Philosopher, Message, Role, Relation, ApiConfig, Language, Summary, UserInfo } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
-import { Send, Play, Target, BookOpen, User, Crown, Lightbulb, MessageCircleQuestion, Hand, X, Save, Check } from 'lucide-react';
+import { Send, Play, Target, BookOpen, User, Crown, Lightbulb, MessageCircleQuestion, Hand, X, Save, Check, Cloud, Upload } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -114,6 +114,7 @@ interface Props {
   onSaveSession?: (name: string) => void;
   sessionName?: string;
   onEnd: () => void;
+  user: UserInfo | null;
 }
 
 export default function RoundtableScreen({
@@ -129,7 +130,8 @@ export default function RoundtableScreen({
   setSummaries,
   onSaveSession,
   sessionName = '',
-  onEnd
+  onEnd,
+  user
 }: Props) {
   const [role, setRole] = useState<Role>('participant');
   const [input, setInput] = useState('');
@@ -155,6 +157,7 @@ export default function RoundtableScreen({
   const [isSaved, setIsSaved] = useState(false);
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
   const [tempSessionName, setTempSessionName] = useState('');
+  const [shareToCloud, setShareToCloud] = useState(false);
   
   const [selectedSummary, setSelectedSummary] = useState<{ id: string, messageIndex: number, text: string, title: string } | null>(null);
   const [includeSummariesInDownload, setIncludeSummariesInDownload] = useState(true);
@@ -213,6 +216,44 @@ export default function RoundtableScreen({
     } finally {
       setIsSummarizing(false);
     }
+  };
+
+  const handleSave = async (name: string) => {
+    onSaveSession?.(name);
+    setIsSaveModalOpen(false);
+    setIsSaved(true);
+
+    // Upload to cloud if checkbox checked and user logged in
+    if (shareToCloud && user) {
+      try {
+        const sessionObj = {
+          id: Date.now().toString(),
+          name: name || sessionName || (language === 'zh' ? `会话 ${new Date().toLocaleDateString()}` : `Session ${new Date().toLocaleDateString()}`),
+          date: new Date().toISOString(),
+          topic,
+          philosophers,
+          stage,
+          messages,
+          summaries
+        };
+        const res = await fetch('/api/sessions/share', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${user.token}`
+          },
+          body: JSON.stringify({ session: sessionObj })
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          console.error('Failed to upload session to cloud:', err.error);
+        }
+      } catch (e) {
+        console.error('Failed to upload session to cloud:', e);
+      }
+    }
+    setShareToCloud(false);
+    setTimeout(() => setIsSaved(false), 2000);
   };
 
 
@@ -647,9 +688,10 @@ export default function RoundtableScreen({
           </div>
 
           
-          <button 
+          <button
             onClick={() => {
               setTempSessionName(sessionName || '');
+              setShareToCloud(false);
               setIsSaveModalOpen(true);
             }} 
             className={cn(
@@ -1011,8 +1053,8 @@ export default function RoundtableScreen({
                 <label className="block text-sm font-medium text-neutral-700 mb-2">
                   {isZh ? '会话名称' : 'Session Name'}
                 </label>
-                <input 
-                  type="text" 
+                <input
+                  type="text"
                   value={tempSessionName}
                   onChange={e => setTempSessionName(e.target.value)}
                   placeholder={isZh ? '留空则使用默认日期' : 'Leave blank for default date'}
@@ -1020,28 +1062,35 @@ export default function RoundtableScreen({
                   autoFocus
                   onKeyDown={e => {
                     if (e.key === 'Enter') {
-                      onSaveSession?.(tempSessionName);
-                      setIsSaveModalOpen(false);
-                      setIsSaved(true);
-                      setTimeout(() => setIsSaved(false), 2000);
+                      handleSave(tempSessionName);
                     }
                   }}
                 />
+                {/* Cloud upload checkbox - only for logged-in users */}
+                {user && (
+                  <label className="flex items-center gap-2 mt-3 p-2.5 bg-indigo-50 border border-indigo-100 rounded-lg cursor-pointer hover:bg-indigo-100 transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={shareToCloud}
+                      onChange={(e) => setShareToCloud(e.target.checked)}
+                      className="rounded border-indigo-300 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <span className="text-xs font-medium text-indigo-700 flex items-center gap-1">
+                      <Upload className="w-3.5 h-3.5" />
+                      {isZh ? '上传到云端（仅自己可见）' : 'Upload to cloud (private)'}
+                    </span>
+                  </label>
+                )}
               </div>
               <div className="p-4 bg-neutral-50 flex justify-end gap-2 border-t border-neutral-100">
-                <button 
-                  onClick={() => setIsSaveModalOpen(false)}
+                <button
+                  onClick={() => { setIsSaveModalOpen(false); setShareToCloud(false); }}
                   className="px-4 py-2 text-sm font-medium text-neutral-600 hover:bg-neutral-200 rounded-lg transition-colors"
                 >
                   {isZh ? '取消' : 'Cancel'}
                 </button>
-                <button 
-                  onClick={() => {
-                    onSaveSession?.(tempSessionName);
-                    setIsSaveModalOpen(false);
-                    setIsSaved(true);
-                    setTimeout(() => setIsSaved(false), 2000);
-                  }}
+                <button
+                  onClick={() => handleSave(tempSessionName)}
                   className="px-4 py-2 text-sm font-medium bg-neutral-900 text-white hover:bg-neutral-800 rounded-lg transition-colors"
                 >
                   {isZh ? '保存' : 'Save'}

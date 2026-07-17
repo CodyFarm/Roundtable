@@ -1,0 +1,9 @@
+[
+  {
+    "id": "a268ed6e-6837-421f-b694-25bbff2ac73d",
+    "username": "admin",
+    "passwordHash": "a1081451c0a979c8b35e2aef7972a0002b10aca632abe04a421332845da861502436c6d3c2447baaea5e754c2f41c317bbdb118feda2b5cc9427108907dff18e",
+    "salt": "e87df4df7840ccbc26dfd4cf25152f09ddf1caca4209965b6419b7dcbefdff83",
+    "createdAt": "2026-07-17T06:19:37.474Z"
+  }
+]

@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import SetupScreen from './components/SetupScreen';
 import RoundtableScreen from './components/RoundtableScreen';
-import { Stage, Philosopher, Message, ApiConfig, Language, SavedSession, Summary } from './types';
+import AuthModal from './components/AuthModal';
+import { Stage, Philosopher, Message, ApiConfig, Language, SavedSession, Summary, UserInfo } from './types';
 
 export default function App() {
   const [stage, setStage] = useState<Stage>('setup');
@@ -13,8 +14,10 @@ export default function App() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessionName, setSessionName] = useState<string>('');
   const [language, setLanguage] = useState<Language>('zh');
+  const [user, setUser] = useState<UserInfo | null>(null);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
-  // Load API config from local storage on mount
+  // Load API config and user from local storage on mount
   useEffect(() => {
     const savedConfig = localStorage.getItem('api_config');
     if (savedConfig) {
@@ -37,6 +40,14 @@ export default function App() {
     const savedLang = localStorage.getItem('app_language');
     if (savedLang === 'zh' || savedLang === 'en') {
       setLanguage(savedLang);
+    }
+
+    const savedUser = localStorage.getItem('philo_user');
+    if (savedUser) {
+      try {
+        const parsed = JSON.parse(savedUser);
+        setUser(parsed);
+      } catch (e) {}
     }
   }, []);
 
@@ -100,10 +111,28 @@ export default function App() {
     setSessionName('');
   };
 
+  const handleLogin = (userInfo: UserInfo) => {
+    setUser(userInfo);
+    localStorage.setItem('philo_user', JSON.stringify(userInfo));
+    setIsAuthModalOpen(false);
+  };
+
+  const handleLogout = () => {
+    setUser(null);
+    localStorage.removeItem('philo_user');
+  };
+
   return (
     <div className="min-h-screen bg-neutral-50 text-neutral-900 font-sans">
       {stage === 'setup' ? (
-        <SetupScreen onStart={handleStart} initialApiConfig={apiConfig} initialLanguage={language} />
+        <SetupScreen
+          onStart={handleStart}
+          initialApiConfig={apiConfig}
+          initialLanguage={language}
+          user={user}
+          onOpenAuth={() => setIsAuthModalOpen(true)}
+          onLogout={handleLogout}
+        />
       ) : (
         <RoundtableScreen
           topic={topic}
@@ -119,8 +148,16 @@ export default function App() {
           onSaveSession={handleSaveSession}
           sessionName={sessionName}
           onEnd={handleEnd}
+          user={user}
         />
       )}
+
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        onLogin={handleLogin}
+        language={language}
+      />
     </div>
   );
 }

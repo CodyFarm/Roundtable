@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { Philosopher, PRESET_PHILOSOPHERS, ApiConfig, ApiProvider, Language, SavedSession, Message, Summary, Stage } from '../types';
-import { Settings, Users, MessageSquareQuote, Globe, Plus, Edit2, X, Upload, Trash2, BookOpen } from 'lucide-react';
+import { Philosopher, PRESET_PHILOSOPHERS, ApiConfig, ApiProvider, Language, SavedSession, Message, Summary, Stage, UserInfo, SharedPhilosopherEntry, SharedSessionEntry } from '../types';
+import { Settings, Users, MessageSquareQuote, Globe, Plus, Edit2, X, Upload, Trash2, BookOpen, User, LogOut, Cloud, Share2, Download } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import * as pdfjsLib from 'pdfjs-dist';
 
@@ -11,9 +11,12 @@ interface Props {
   onStart: (topic: string, philosophers: Philosopher[], apiConfig: ApiConfig, language: Language, restoreSessionId?: string, restoreMessages?: Message[], restoreSummaries?: Summary[], restoreStage?: Stage, restoreName?: string) => void;
   initialApiConfig: ApiConfig;
   initialLanguage: Language;
+  user: UserInfo | null;
+  onOpenAuth: () => void;
+  onLogout: () => void;
 }
 
-export default function SetupScreen({ onStart, initialApiConfig, initialLanguage }: Props) {
+export default function SetupScreen({ onStart, initialApiConfig, initialLanguage, user, onOpenAuth, onLogout }: Props) {
   const [topic, setTopic] = useState('');
   
   const [apiProvider, setApiProvider] = useState<ApiProvider>(initialApiConfig.provider || 'deepseek');
@@ -44,6 +47,10 @@ export default function SetupScreen({ onStart, initialApiConfig, initialLanguage
   const [cpFileName, setCpFileName] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [savedSessions, setSavedSessions] = useState<SavedSession[]>([]);
+  const [sharedPhilosophers, setSharedPhilosophers] = useState<SharedPhilosopherEntry[]>([]);
+  const [cloudSessions, setCloudSessions] = useState<SharedSessionEntry[]>([]);
+  const [shareToPool, setShareToPool] = useState(false);
+  const [loadingShared, setLoadingShared] = useState(false);
   useEffect(() => {
     const saved = localStorage.getItem('saved_sessions');
     if (saved) {
@@ -52,8 +59,54 @@ export default function SetupScreen({ onStart, initialApiConfig, initialLanguage
       } catch(e) {}
     }
   }, []);
+
+  // Fetch shared philosophers (no auth required)
+  useEffect(() => {
+    const fetchShared = async () => {
+      setLoadingShared(true);
+      try {
+        const res = await fetch('/api/philosophers/shared');
+        if (res.ok) {
+          const data = await res.json();
+          setSharedPhilosophers(data);
+        }
+      } catch (e) {
+        console.error('Failed to fetch shared philosophers:', e);
+      } finally {
+        setLoadingShared(false);
+      }
+    };
+    fetchShared();
+  }, []);
+
+  // Fetch cloud sessions (only when logged in)
+  useEffect(() => {
+    if (!user) {
+      setCloudSessions([]);
+      return;
+    }
+    const fetchCloudSessions = async () => {
+      try {
+        const res = await fetch('/api/sessions/shared', {
+          headers: { 'Authorization': `Bearer ${user.token}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setCloudSessions(data);
+        }
+      } catch (e) {
+        console.error('Failed to fetch cloud sessions:', e);
+      }
+    };
+    fetchCloudSessions();
+  }, [user]);
   
   const restoreSession = (s: SavedSession) => {
+    onStart(s.topic, s.philosophers, { provider: apiProvider, key: apiKey, baseUrl: apiBaseUrl, model: apiModel, thinkingDepth }, lang, s.id, s.messages, s.summaries, s.stage, s.name);
+  };
+
+  const restoreCloudSession = (entry: SharedSessionEntry) => {
+    const s = entry.session;
     onStart(s.topic, s.philosophers, { provider: apiProvider, key: apiKey, baseUrl: apiBaseUrl, model: apiModel, thinkingDepth }, lang, s.id, s.messages, s.summaries, s.stage, s.name);
   };
   
@@ -62,6 +115,22 @@ export default function SetupScreen({ onStart, initialApiConfig, initialLanguage
     const newSessions = savedSessions.filter(s => s.id !== id);
     setSavedSessions(newSessions);
     localStorage.setItem('saved_sessions', JSON.stringify(newSessions));
+  };
+
+  const deleteCloudSession = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!user) return;
+    try {
+      const res = await fetch(`/api/sessions/shared/${id}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${user.token}` }
+      });
+      if (res.ok) {
+        setCloudSessions(prev => prev.filter(s => s.id !== id));
+      }
+    } catch (err) {
+      console.error('Failed to delete cloud session:', err);
+    }
   };
 
 
@@ -104,13 +173,37 @@ export default function SetupScreen({ onStart, initialApiConfig, initialLanguage
         return { ...p, ...o };
       }
       return p;
-    })
+    }),
+    ...sharedPhilosophers
+      .filter(sp => {
+        // Deduplicate: skip shared philosophers that match an existing custom philosopher (by name)
+        const alreadyExists = customPhilosophers.some(
+          cp => cp.name === sp.philosopher.name && cp.nameEn === sp.philosopher.nameEn
+        );
+        return !alreadyExists;
+      })
+      .map(sp => {
+        const o = overrides[sp.id];
+        const p = { ...sp.philosopher, isCustom: true, isShared: true, sharedBy: sp.username };
+        if (o) {
+          return { ...p, ...o };
+        }
+        return p;
+      })
   ];
 
   const openModal = (id?: string) => {
     if (id) {
       const p = allPhilosophers.find(x => x.id === id);
       if (p) {
+        // Prevent editing shared philosophers from other users
+        if (p.isShared && p.sharedBy !== user?.username) {
+          return;
+        }
+        // Prevent editing philosophers owned by another user
+        if (p.createdBy && p.createdBy !== user?.username) {
+          return;
+        }
         setCpName(p.name);
         setCpNameEn(p.nameEn);
         setCpDesc(p.description);
@@ -197,11 +290,15 @@ export default function SetupScreen({ onStart, initialApiConfig, initialLanguage
     }
   };
 
-  const saveCustomPhilosopher = () => {
+  const saveCustomPhilosopher = async () => {
     if (!cpName || !cpNameEn) {
       alert(lang === 'zh' ? '请输入姓名' : 'Please enter names');
       return;
     }
+    // Preserve original createdBy when editing; set it when creating while logged in
+    const existingPhilosopher = editingId
+      ? customPhilosophers.find(p => p.id === editingId)
+      : null;
     const newP: Philosopher = {
       id: editingId || `custom_${Date.now()}`,
       name: cpName,
@@ -210,6 +307,7 @@ export default function SetupScreen({ onStart, initialApiConfig, initialLanguage
       descriptionEn: cpDescEn,
       color: '#0ea5e9', // default sky-500
       isCustom: true,
+      createdBy: existingPhilosopher?.createdBy || (user ? user.username : undefined),
       customPrompt: cpPrompt,
       fileContent: cpFileContent
     };
@@ -219,6 +317,31 @@ export default function SetupScreen({ onStart, initialApiConfig, initialLanguage
     } else {
       saveCustomPhilosophers([...customPhilosophers, newP]);
     }
+
+    // Share to pool if checked and user is logged in
+    if (shareToPool && user) {
+      try {
+        const res = await fetch('/api/philosophers/share', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${user.token}`
+          },
+          body: JSON.stringify({ philosopher: newP })
+        });
+        if (res.ok) {
+          const entry = await res.json();
+          setSharedPhilosophers(prev => [...prev, entry]);
+        } else {
+          const err = await res.json().catch(() => ({}));
+          alert(err.error || (lang === 'zh' ? '上传到共享池失败' : 'Failed to share to pool'));
+        }
+      } catch (e) {
+        console.error('Failed to share philosopher:', e);
+      }
+    }
+
+    setShareToPool(false);
     setIsModalOpen(false);
   };
 
@@ -226,6 +349,14 @@ export default function SetupScreen({ onStart, initialApiConfig, initialLanguage
     const configObj: Record<string, any> = {};
     allPhilosophers.forEach(p => {
       if (selectedIds.has(p.id)) {
+        // Skip shared philosophers from other users (can't edit them)
+        if (p.isShared && p.sharedBy !== user?.username) {
+          return;
+        }
+        // Skip philosophers owned by another user
+        if (p.createdBy && p.createdBy !== user?.username) {
+          return;
+        }
         configObj[p.id] = {
           name: p.name,
           nameEn: p.nameEn,
@@ -389,15 +520,47 @@ export default function SetupScreen({ onStart, initialApiConfig, initialLanguage
     }, lang);
   };
 
+  // Filter out local sessions that are already synced to cloud
+  const localOnlySessions = savedSessions.filter(ls =>
+    !cloudSessions.some(cs =>
+      cs.session.name === ls.name && cs.session.topic === ls.topic
+    )
+  );
+
   return (
     <div className="max-w-3xl mx-auto py-12 px-4 sm:px-6 relative">
       
       {/* Top Controls */}
-      <div className="flex justify-end mb-8">
+      <div className="flex justify-between items-center mb-8">
+        <div className="flex items-center gap-2">
+          {user ? (
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-full shadow-sm border border-neutral-200">
+                <User className="w-4 h-4 text-indigo-500" />
+                <span className="text-sm text-neutral-700 font-medium">{user.username}</span>
+              </div>
+              <button
+                onClick={onLogout}
+                className="flex items-center gap-1.5 text-xs text-neutral-500 hover:text-red-500 transition-colors bg-white px-2.5 py-1.5 rounded-full shadow-sm border border-neutral-200"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                {lang === 'zh' ? '退出' : 'Logout'}
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={onOpenAuth}
+              className="flex items-center gap-1.5 bg-white px-3 py-1.5 rounded-full shadow-sm border border-neutral-200 text-sm text-neutral-700 hover:text-neutral-900 hover:border-neutral-300 transition-colors font-medium"
+            >
+              <User className="w-4 h-4" />
+              {lang === 'zh' ? '登录 / 注册' : 'Login / Register'}
+            </button>
+          )}
+        </div>
         <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-full shadow-sm border border-neutral-200">
           <Globe className="w-4 h-4 text-neutral-500" />
-          <select 
-            value={lang} 
+          <select
+            value={lang}
             onChange={e => setLang(e.target.value as Language)}
             className="text-sm bg-transparent outline-none text-neutral-700 font-medium"
           >
@@ -420,13 +583,13 @@ export default function SetupScreen({ onStart, initialApiConfig, initialLanguage
       </motion.div>
 
 
-      {savedSessions.length > 0 && (
+      {localOnlySessions.length > 0 && (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mb-8">
           <h2 className="text-sm font-semibold text-neutral-500 uppercase tracking-wider mb-4">
             {lang === 'zh' ? '继续之前的会话' : 'Continue Previous Session'}
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {savedSessions.map(s => (
+            {localOnlySessions.map(s => (
               <div 
                 key={s.id} 
                 onClick={() => restoreSession(s)}
@@ -467,7 +630,58 @@ export default function SetupScreen({ onStart, initialApiConfig, initialLanguage
           </div>
         </motion.div>
       )}
-      
+
+      {/* Cloud Sessions - only when logged in */}
+      {user && cloudSessions.length > 0 && (
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mb-8">
+          <h2 className="text-sm font-semibold text-indigo-500 uppercase tracking-wider mb-4 flex items-center gap-2">
+            <Cloud className="w-4 h-4" />
+            {lang === 'zh' ? '云端会话' : 'Cloud Sessions'}
+          </h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {cloudSessions.map(entry => (
+              <div
+                key={entry.id}
+                onClick={() => restoreCloudSession(entry)}
+                className="bg-white p-4 rounded-xl shadow-sm border border-indigo-200 hover:border-indigo-400 hover:shadow-md cursor-pointer transition-all flex flex-col relative group"
+              >
+                <div className="flex justify-between items-start mb-2">
+                  <h3 className="font-medium text-neutral-900 truncate pr-6">{entry.session.name}</h3>
+                  <button
+                    onClick={(e) => deleteCloudSession(entry.id, e)}
+                    className="absolute right-3 top-3 text-neutral-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+                <p className="text-xs text-neutral-500 mb-3 truncate">{entry.session.topic}</p>
+                <div className="flex items-center gap-2 mt-auto">
+                  <div className="flex -space-x-2">
+                    {entry.session.philosophers.slice(0, 4).map(p => (
+                      <div
+                        key={p.id}
+                        className="w-6 h-6 rounded-full border-2 border-white flex items-center justify-center text-[10px] font-bold text-white shadow-sm"
+                        style={{ backgroundColor: p.color }}
+                        title={lang === 'zh' ? p.name : p.nameEn}
+                      >
+                        {(lang === 'zh' ? p.name : p.nameEn).charAt(0)}
+                      </div>
+                    ))}
+                    {entry.session.philosophers.length > 4 && (
+                      <div className="w-6 h-6 rounded-full border-2 border-white flex items-center justify-center text-[10px] font-bold text-neutral-600 bg-neutral-100 shadow-sm">
+                        +{entry.session.philosophers.length - 4}
+                      </div>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-neutral-400 ml-auto">{new Date(entry.createdAt).toLocaleDateString()}</span>
+                  <span className="text-[10px] text-indigo-400 flex items-center gap-0.5"><Cloud className="w-3 h-3" /></span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </motion.div>
+      )}
+
       <div className="flex items-center mb-6">
         <h2 className="text-sm font-semibold text-neutral-500 uppercase tracking-wider">
           {lang === 'zh' ? '新建会话' : 'New Session'}
@@ -523,15 +737,23 @@ export default function SetupScreen({ onStart, initialApiConfig, initialLanguage
                 >
                   <div className="flex justify-between items-start">
                     <div className="font-semibold text-lg">{lang === 'zh' ? p.name : p.nameEn}</div>
-                    {p.isCustom && (
-                      <button 
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); openModal(p.id); }}
-                        className={`p-1 transition-colors ${selectedIds.has(p.id) ? 'text-neutral-300 hover:text-white' : 'text-neutral-600 hover:text-neutral-900'}`}
-                      >
-                        <Edit2 className="w-3.5 h-3.5" />
-                      </button>
-                    )}
+                    <div className="flex items-center gap-1">
+                      {p.isShared && (
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${selectedIds.has(p.id) ? 'bg-indigo-500 text-white' : 'bg-indigo-100 text-indigo-600'}`}>
+                          <Share2 className="w-2.5 h-2.5 inline mr-0.5" />
+                          {p.sharedBy || 'shared'}
+                        </span>
+                      )}
+                      {p.isCustom && !p.isShared && (!p.createdBy || p.createdBy === user?.username) && (
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); openModal(p.id); }}
+                          className={`p-1 transition-colors ${selectedIds.has(p.id) ? 'text-neutral-300 hover:text-white' : 'text-neutral-600 hover:text-neutral-900'}`}
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <div className={`text-xs mt-1 line-clamp-2 ${selectedIds.has(p.id) ? 'text-neutral-300' : 'text-neutral-500'}`}>
                     {lang === 'zh' ? p.description : p.descriptionEn}
@@ -684,39 +906,39 @@ export default function SetupScreen({ onStart, initialApiConfig, initialLanguage
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-xs font-medium text-neutral-700 mb-1">Name (Chinese)</label>
-                    <input 
-                      value={cpName} 
-                      onChange={e => setCpName(e.target.value)} 
-                      className="w-full px-3 py-2 border border-neutral-300 rounded-lg text-sm outline-none focus:border-neutral-800" 
+                    <input
+                      value={cpName}
+                      onChange={e => setCpName(e.target.value)}
+                      className="w-full px-3 py-2 border border-neutral-300 rounded-lg text-sm outline-none focus:border-neutral-800"
                       placeholder="e.g. 奥古斯丁"
                     />
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-neutral-700 mb-1">Name (English)</label>
-                    <input 
-                      value={cpNameEn} 
-                      onChange={e => setCpNameEn(e.target.value)} 
-                      className="w-full px-3 py-2 border border-neutral-300 rounded-lg text-sm outline-none focus:border-neutral-800" 
+                    <input
+                      value={cpNameEn}
+                      onChange={e => setCpNameEn(e.target.value)}
+                      className="w-full px-3 py-2 border border-neutral-300 rounded-lg text-sm outline-none focus:border-neutral-800"
                       placeholder="e.g. Augustine"
                     />
                   </div>
                 </div>
-                
+
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-xs font-medium text-neutral-700 mb-1">Description (Chinese)</label>
-                    <input 
-                      value={cpDesc} 
-                      onChange={e => setCpDesc(e.target.value)} 
-                      className="w-full px-3 py-2 border border-neutral-300 rounded-lg text-sm outline-none focus:border-neutral-800" 
+                    <input
+                      value={cpDesc}
+                      onChange={e => setCpDesc(e.target.value)}
+                      className="w-full px-3 py-2 border border-neutral-300 rounded-lg text-sm outline-none focus:border-neutral-800"
                     />
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-neutral-700 mb-1">Description (English)</label>
-                    <input 
-                      value={cpDescEn} 
-                      onChange={e => setCpDescEn(e.target.value)} 
-                      className="w-full px-3 py-2 border border-neutral-300 rounded-lg text-sm outline-none focus:border-neutral-800" 
+                    <input
+                      value={cpDescEn}
+                      onChange={e => setCpDescEn(e.target.value)}
+                      className="w-full px-3 py-2 border border-neutral-300 rounded-lg text-sm outline-none focus:border-neutral-800"
                     />
                   </div>
                 </div>
@@ -725,18 +947,18 @@ export default function SetupScreen({ onStart, initialApiConfig, initialLanguage
                   <label className="block text-xs font-medium text-neutral-700 mb-1">
                     {lang === 'zh' ? '自定义初始提示词 / 角色设定' : 'Custom Prompt / Role Instructions'}
                   </label>
-                  <textarea 
-                    value={cpPrompt} 
-                    onChange={e => setCpPrompt(e.target.value)} 
+                  <textarea
+                    value={cpPrompt}
+                    onChange={e => setCpPrompt(e.target.value)}
                     rows={4}
-                    className="w-full px-3 py-2 border border-neutral-300 rounded-lg text-sm outline-none focus:border-neutral-800 resize-none" 
+                    className="w-full px-3 py-2 border border-neutral-300 rounded-lg text-sm outline-none focus:border-neutral-800 resize-none"
                     placeholder={lang === 'zh' ? "描述这个哲学家的核心思想、说话风格等..." : "Describe core ideas and speaking style..."}
                   />
                 </div>
 
                 <div>
                   <label className="block text-xs font-medium text-neutral-700 mb-1">
-                    {lang === 'zh' ? '上传参考资料 (仅支持 TXT/Markdown)' : 'Upload Reference Material (TXT/Markdown)'}
+                    {lang === 'zh' ? '上传参考资料 (TXT/Markdown/PDF)' : 'Upload Reference Material (TXT/Markdown/PDF)'}
                   </label>
                   <div className="flex items-center gap-2">
                     <button 
@@ -790,6 +1012,22 @@ export default function SetupScreen({ onStart, initialApiConfig, initialLanguage
                     </div>
                   )}
                 </div>
+
+                {/* Share to pool checkbox - only visible for logged-in users */}
+                {user && (
+                  <label className="flex items-center gap-2 p-3 bg-indigo-50 border border-indigo-100 rounded-lg cursor-pointer hover:bg-indigo-100 transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={shareToPool}
+                      onChange={(e) => setShareToPool(e.target.checked)}
+                      className="rounded border-indigo-300 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <span className="text-xs font-medium text-indigo-800">
+                      <Share2 className="w-3.5 h-3.5 inline mr-1" />
+                      {lang === 'zh' ? '上传到哲学家共享池（所有用户可见）' : 'Share to philosopher pool (visible to all users)'}
+                    </span>
+                  </label>
+                )}
               </div>
 
               <div className="p-4 border-t border-neutral-100 bg-neutral-50 flex justify-end gap-2">

@@ -1,4 +1,19 @@
 import express from "express";
+import crypto from "node:crypto";
+import {
+  findInvitationCode,
+  markInvitationCodeUsed,
+  findUserByUsername,
+  saveUser,
+  createToken,
+  findToken,
+  getSharedPhilosophers,
+  saveSharedPhilosopher,
+  deleteSharedPhilosopher,
+  getSharedSessions,
+  saveSharedSession,
+  deleteSharedSession,
+} from "./data-layer";
 
 // ── Lazy-load AI SDKs ──────────────────────────────────────────────────
 // On Vercel serverless functions, eagerly importing all three SDKs in one
@@ -38,6 +53,274 @@ export function createApp() {
 
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+  // ── Auth helpers ────────────────────────────────────────────────────
+
+  const SALT_LEN = 32;
+  const KEY_LEN = 64;
+
+  function hashPassword(password: string, salt: string): string {
+    return crypto.scryptSync(password, salt, KEY_LEN).toString("hex");
+  }
+
+  /** Extract authenticated user from Authorization header. Returns null if not logged in. */
+  function getAuthUser(req: express.Request): { userId: string; username: string } | null {
+    const header = req.headers.authorization;
+    if (!header || !header.startsWith("Bearer ")) return null;
+    const token = header.slice(7);
+    const entry = findToken(token);
+    if (!entry) return null;
+    return { userId: entry.userId, username: entry.username };
+  }
+
+  // ── Auth routes ────────────────────────────────────────────────────
+
+  // Register
+  app.post("/api/auth/register", (req, res) => {
+    try {
+      const { username, password, invitationCode } = req.body;
+
+      if (!username || !password || !invitationCode) {
+        res.status(400).json({ error: "Missing required fields: username, password, invitationCode" });
+        return;
+      }
+
+      if (typeof username !== "string" || username.trim().length < 2 || username.trim().length > 30) {
+        res.status(400).json({ error: "Username must be between 2 and 30 characters" });
+        return;
+      }
+
+      if (typeof password !== "string" || password.length < 4) {
+        res.status(400).json({ error: "Password must be at least 4 characters" });
+        return;
+      }
+
+      // Validate username is alphanumeric + underscore + Chinese
+      if (!/^[\w一-鿿]+$/.test(username.trim())) {
+        res.status(400).json({ error: "Username can only contain letters, numbers, underscores, and Chinese characters" });
+        return;
+      }
+
+      // Check if username already exists
+      if (findUserByUsername(username.trim())) {
+        res.status(409).json({ error: "Username already taken" });
+        return;
+      }
+
+      // Validate invitation code
+      const codeEntry = findInvitationCode(invitationCode.trim().toUpperCase());
+      if (!codeEntry) {
+        res.status(400).json({ error: "Invalid or already used invitation code" });
+        return;
+      }
+
+      // Create user
+      const salt = crypto.randomBytes(SALT_LEN).toString("hex");
+      const passwordHash = hashPassword(password, salt);
+      const user = {
+        id: crypto.randomUUID(),
+        username: username.trim(),
+        passwordHash,
+        salt,
+        createdAt: new Date().toISOString(),
+      };
+      saveUser(user);
+
+      // Mark invitation code as used
+      markInvitationCodeUsed(codeEntry.code, username.trim());
+
+      // Create session token
+      const tokenEntry = createToken(user.id, user.username);
+
+      res.json({
+        id: user.id,
+        username: user.username,
+        token: tokenEntry.token,
+      });
+    } catch (error: any) {
+      console.error("Register error:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Login
+  app.post("/api/auth/login", (req, res) => {
+    try {
+      const { username, password } = req.body;
+
+      if (!username || !password) {
+        res.status(400).json({ error: "Missing username or password" });
+        return;
+      }
+
+      const user = findUserByUsername(username.trim());
+      if (!user) {
+        res.status(401).json({ error: "Invalid username or password" });
+        return;
+      }
+
+      const hash = hashPassword(password, user.salt);
+      if (hash !== user.passwordHash) {
+        res.status(401).json({ error: "Invalid username or password" });
+        return;
+      }
+
+      const tokenEntry = createToken(user.id, user.username);
+
+      res.json({
+        id: user.id,
+        username: user.username,
+        token: tokenEntry.token,
+      });
+    } catch (error: any) {
+      console.error("Login error:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Get current user
+  app.get("/api/auth/me", (req, res) => {
+    const user = getAuthUser(req);
+    if (!user) {
+      res.status(401).json({ error: "Not authenticated" });
+      return;
+    }
+    res.json(user);
+  });
+
+  // ── Shared Philosophers routes ──────────────────────────────────────
+
+  // Share a philosopher (requires auth)
+  app.post("/api/philosophers/share", (req, res) => {
+    const user = getAuthUser(req);
+    if (!user) {
+      res.status(401).json({ error: "You must be logged in to share philosophers" });
+      return;
+    }
+
+    try {
+      const { philosopher } = req.body;
+      if (!philosopher || !philosopher.name) {
+        res.status(400).json({ error: "Invalid philosopher data" });
+        return;
+      }
+
+      const entry = {
+        id: crypto.randomUUID(),
+        userId: user.userId,
+        username: user.username,
+        philosopher,
+        createdAt: new Date().toISOString(),
+      };
+      saveSharedPhilosopher(entry);
+      res.json(entry);
+    } catch (error: any) {
+      console.error("Share philosopher error:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // List all shared philosophers (no auth required)
+  app.get("/api/philosophers/shared", (_req, res) => {
+    try {
+      const list = getSharedPhilosophers();
+      res.json(list);
+    } catch (error: any) {
+      console.error("List shared philosophers error:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Delete own shared philosopher (requires auth)
+  app.delete("/api/philosophers/shared/:id", (req, res) => {
+    const user = getAuthUser(req);
+    if (!user) {
+      res.status(401).json({ error: "You must be logged in" });
+      return;
+    }
+
+    try {
+      const success = deleteSharedPhilosopher(req.params.id, user.userId);
+      if (!success) {
+        res.status(404).json({ error: "Philosopher not found or not yours" });
+        return;
+      }
+      res.json({ ok: true });
+    } catch (error: any) {
+      console.error("Delete shared philosopher error:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // ── Shared Sessions routes ──────────────────────────────────────────
+
+  // Share a session (requires auth)
+  app.post("/api/sessions/share", (req, res) => {
+    const user = getAuthUser(req);
+    if (!user) {
+      res.status(401).json({ error: "You must be logged in to share sessions" });
+      return;
+    }
+
+    try {
+      const { session } = req.body;
+      if (!session) {
+        res.status(400).json({ error: "Invalid session data" });
+        return;
+      }
+
+      const entry = {
+        id: crypto.randomUUID(),
+        userId: user.userId,
+        username: user.username,
+        session,
+        createdAt: new Date().toISOString(),
+      };
+      saveSharedSession(entry);
+      res.json(entry);
+    } catch (error: any) {
+      console.error("Share session error:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // List own shared sessions (requires auth, only own)
+  app.get("/api/sessions/shared", (req, res) => {
+    const user = getAuthUser(req);
+    if (!user) {
+      res.status(401).json({ error: "You must be logged in to view your sessions" });
+      return;
+    }
+
+    try {
+      const list = getSharedSessions().filter((s) => s.userId === user.userId);
+      res.json(list);
+    } catch (error: any) {
+      console.error("List shared sessions error:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Delete own shared session (requires auth)
+  app.delete("/api/sessions/shared/:id", (req, res) => {
+    const user = getAuthUser(req);
+    if (!user) {
+      res.status(401).json({ error: "You must be logged in" });
+      return;
+    }
+
+    try {
+      const success = deleteSharedSession(req.params.id, user.userId);
+      if (!success) {
+        res.status(404).json({ error: "Session not found or not yours" });
+        return;
+      }
+      res.json({ ok: true });
+    } catch (error: any) {
+      console.error("Delete shared session error:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
 
   // Helper to parse config. Falls back to server-side environment variables
   // when the frontend does not provide an API key, model, or base URL.
