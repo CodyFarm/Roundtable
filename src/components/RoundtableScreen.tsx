@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
-import { Stage, Philosopher, Message, Role, Relation, ApiConfig, Language, Summary, UserInfo } from '../types';
+import { Stage, Philosopher, Message, Role, Relation, ApiConfig, Language, Summary, UserInfo, SessionMode } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
-import { Send, Play, Target, BookOpen, User, Crown, Lightbulb, MessageCircleQuestion, Hand, X, Save, Check, Cloud, Upload } from 'lucide-react';
+import { Send, Play, Target, BookOpen, User, Crown, Lightbulb, MessageCircleQuestion, Hand, X, Save, Check, Cloud, Upload, MessageCircle } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -115,6 +115,7 @@ interface Props {
   sessionName?: string;
   onEnd: () => void;
   user: UserInfo | null;
+  mode: SessionMode;
 }
 
 export default function RoundtableScreen({
@@ -131,7 +132,8 @@ export default function RoundtableScreen({
   onSaveSession,
   sessionName = '',
   onEnd,
-  user
+  user,
+  mode
 }: Props) {
   const [role, setRole] = useState<Role>('participant');
   const [input, setInput] = useState('');
@@ -199,7 +201,8 @@ export default function RoundtableScreen({
         },
         body: JSON.stringify({
           topic,
-          messages
+          messages,
+          mode
         })
       });
       if (!response.ok) throw new Error('API Error');
@@ -234,7 +237,8 @@ export default function RoundtableScreen({
           philosophers,
           stage,
           messages,
-          summaries
+          summaries,
+          mode
         };
         const res = await fetch('/api/sessions/share', {
           method: 'POST',
@@ -280,13 +284,20 @@ export default function RoundtableScreen({
     agree: isZh ? '赞同' : 'Agrees with',
     disagree: isZh ? '反驳' : 'Disagrees with',
     supplement: isZh ? '补充' : 'Adds to',
+    question: isZh ? '质疑' : 'Questions',
     continueListening: isZh ? '继续听哲学家发言' : 'Listen to next philosopher',
+    continueListeningSingle: isZh ? '继续对话' : 'Continue Dialogue',
     hostPlaceholder: isZh ? "作为主持人发言 (引导话题，总结等)..." : "Speak as Host (guide, summarize)...",
     participantPlaceholder: isZh ? "输入你的观点... (输入 @哲学家名字 指定回应)" : "Your thought... (use @Name to mention)",
+    chatPlaceholder: isZh ? "向哲学家提问或分享你的想法..." : "Ask the philosopher a question or share your thoughts...",
     followUpPlaceholder: isZh ? "输入你想追问的内容或新观点..." : "Enter your follow-up or new perspective...",
     hostName: isZh ? '主持人' : 'Host',
     participantName: isZh ? '参与者 (我)' : 'Participant (Me)',
-    download: isZh ? '下载对话记录' : 'Download Chat'
+    chatUserName: isZh ? '我' : 'Me',
+    download: isZh ? '下载对话记录' : 'Download Chat',
+    chatMode: isZh ? '对话模式' : 'Dialogue Mode',
+    detailLabel: isZh ? '观点' : 'Viewpoint',
+    startConversation: isZh ? '开始与哲学家对话' : 'Start Conversation',
   };
 
   const handleDownload = () => {
@@ -323,6 +334,11 @@ export default function RoundtableScreen({
 
   // Auto-play opening stage until everyone has spoken
   useEffect(() => {
+    if (mode === 'chat' && stage === 'chat' && messages.length === 0 && !isLoading) {
+      // Chat mode: philosopher starts with a greeting
+      triggerNextPhilosopher();
+      return;
+    }
     if (stage === 'opening' && !isLoading) {
       const spokenPhilosophers = new Set(messages.map(m => m.author));
       const languageIsZh = language === 'zh';
@@ -337,11 +353,13 @@ export default function RoundtableScreen({
         }
       }
     }
-  }, [stage, messages.length, isLoading]);
+  }, [stage, messages.length, isLoading, mode]);
 
-  
+
   // Auto-trigger next philosopher if user just @-mentioned someone and they replied
   useEffect(() => {
+    if (mode === 'chat') return; // Chat mode doesn't auto-trigger
+
     if (stage === 'free' && messages.length > 0 && messages[messages.length - 1].role === 'user' && !isLoading && !isGeneratingRef.current) {
       // If we entered free stage or user spoke and we haven't triggered, do it
       // Actually, wait, handleSend will trigger it for 'free' stage. 
@@ -373,8 +391,8 @@ export default function RoundtableScreen({
     setIsLoading(true);
     try {
       let finalTarget = target || targetSpeaker || eagerSpeaker || undefined;
-      
-      if (stage === 'opening' && !target) {
+
+      if (mode !== 'chat' && stage === 'opening' && !target) {
         const spokenPhilosophers = new Set(messages.map(m => m.author));
         const languageIsZh = language === 'zh';
         const unSpoken = philosophers.filter(p => !spokenPhilosophers.has(languageIsZh ? p.name : p.nameEn));
@@ -384,6 +402,12 @@ export default function RoundtableScreen({
           // If everyone has spoken, advance to free debate
           setStage('free');
         }
+      }
+
+      // Chat mode: always target the single philosopher
+      if (mode === 'chat') {
+        const p = philosophers[0];
+        finalTarget = isZh ? p.name : p.nameEn;
       }
       
       const lastMessageContent = messages.length > 0 ? messages[messages.length - 1].content : "";
@@ -407,8 +431,9 @@ export default function RoundtableScreen({
           topic,
           philosophers: payloadPhilosophers,
           messages,
-          currentStage: stage === 'opening' ? 'Opening statements' : stage === 'free' ? 'Free debate' : 'Closing statements',
-          targetPhilosopher: finalTarget
+          currentStage: stage === 'opening' ? 'Opening statements' : stage === 'free' ? 'Free debate' : stage === 'closing' ? 'Closing statements' : 'Chat',
+          targetPhilosopher: finalTarget,
+          mode
         })
       });
 
@@ -468,7 +493,7 @@ export default function RoundtableScreen({
     const newMessage: Message = {
       id: Date.now().toString(),
       role: 'user',
-      author: role === 'host' ? t.hostName : t.participantName,
+      author: mode === 'chat' ? t.chatUserName : (role === 'host' ? t.hostName : t.participantName),
       content: input.trim(),
       stage,
       timestamp: Date.now()
@@ -476,15 +501,20 @@ export default function RoundtableScreen({
 
     setMessages(prev => [...prev, newMessage]);
     setInput('');
-    
-    // Check if the user mentioned a philosopher
-    const mentioned = philosophers.find(p => input.includes(`@${isZh ? p.name : p.nameEn}`));
-    if (mentioned) {
-      setTargetSpeaker(isZh ? mentioned.name : mentioned.nameEn);
-      triggerNextPhilosopher(isZh ? mentioned.name : mentioned.nameEn);
+
+    if (mode === 'chat') {
+      // Chat mode: always trigger the philosopher to respond
+      triggerNextPhilosopher();
     } else {
-      if (stage === 'closing' || stage === 'free') {
-        triggerNextPhilosopher();
+      // Check if the user mentioned a philosopher
+      const mentioned = philosophers.find(p => input.includes(`@${isZh ? p.name : p.nameEn}`));
+      if (mentioned) {
+        setTargetSpeaker(isZh ? mentioned.name : mentioned.nameEn);
+        triggerNextPhilosopher(isZh ? mentioned.name : mentioned.nameEn);
+      } else {
+        if (stage === 'closing' || stage === 'free') {
+          triggerNextPhilosopher();
+        }
       }
     }
   };
@@ -632,30 +662,47 @@ export default function RoundtableScreen({
       <header className="bg-white border-b border-neutral-200 px-6 py-4 flex items-center justify-between shrink-0 z-10">
         <div>
           <h1 className="text-xl font-bold text-neutral-900 font-serif flex items-center gap-2">
-            <BookOpen className="w-5 h-5 text-neutral-700" />
-            {topic}
+            {mode === 'chat' ? (
+              <MessageCircle className="w-5 h-5 text-neutral-700" />
+            ) : (
+              <BookOpen className="w-5 h-5 text-neutral-700" />
+            )}
+            {mode === 'chat' && philosophers.length > 0 ? (
+              isZh ? philosophers[0].name : philosophers[0].nameEn
+            ) : topic}
           </h1>
           <div className="flex items-center gap-2 mt-1">
-            <span className={cn(
-              "text-xs font-medium px-2 py-1 rounded-md",
-              stage === 'opening' ? "bg-amber-100 text-amber-800" :
-              stage === 'free' ? "bg-blue-100 text-blue-800" :
-              "bg-purple-100 text-purple-800"
-            )}>
-              {stage === 'opening' ? t.stageOpening : stage === 'free' ? t.stageFree : t.stageClosing}
-            </span>
-            {role === 'host' && stage !== 'closing' && (
-              <button 
-                onClick={nextStage}
-                className="text-xs text-neutral-500 hover:text-neutral-900 flex items-center gap-1 transition-colors"
-              >
-                {t.nextStage} <Play className="w-3 h-3" />
-              </button>
+            {mode === 'chat' ? (
+              <span className="text-xs font-medium px-2 py-1 rounded-md bg-indigo-100 text-indigo-800">
+                {t.chatMode}
+              </span>
+            ) : (
+              <span className={cn(
+                "text-xs font-medium px-2 py-1 rounded-md",
+                stage === 'opening' ? "bg-amber-100 text-amber-800" :
+                stage === 'free' ? "bg-blue-100 text-blue-800" :
+                "bg-purple-100 text-purple-800"
+              )}>
+                {stage === 'opening' ? t.stageOpening : stage === 'free' ? t.stageFree : t.stageClosing}
+              </span>
             )}
+            {!mode || mode === 'debate' ? (
+              <>
+                {role === 'host' && stage !== 'closing' && (
+                  <button
+                    onClick={nextStage}
+                    className="text-xs text-neutral-500 hover:text-neutral-900 flex items-center gap-1 transition-colors"
+                  >
+                    {t.nextStage} <Play className="w-3 h-3" />
+                  </button>
+                )}
+              </>
+            ) : null}
           </div>
         </div>
 
         <div className="flex items-center gap-4">
+          {(mode === 'debate') && (
           <div className="flex bg-neutral-100 p-1 rounded-lg">
             <button
               onClick={() => setRole('participant')}
@@ -676,6 +723,7 @@ export default function RoundtableScreen({
               <Crown className="w-4 h-4" /> {t.host}
             </button>
           </div>
+          )}
           
           <div className="flex items-center gap-3">
             <label className="flex items-center gap-1.5 text-xs text-neutral-600 bg-white border border-neutral-200 px-2 py-1.5 rounded-md cursor-pointer hover:bg-neutral-50 transition-colors">
@@ -731,7 +779,9 @@ export default function RoundtableScreen({
           />
 
           <div className="p-4 border-b border-neutral-100">
-            <h3 className="text-sm font-semibold text-neutral-900">{t.participantsLabel}</h3>
+            <h3 className="text-sm font-semibold text-neutral-900">
+              {mode === 'chat' ? (languageIsZh ? '对话对象' : 'Conversation Partner') : t.participantsLabel}
+            </h3>
           </div>
           <div className="p-2 flex-1 overflow-y-auto">
             {philosophers.map(p => {
@@ -741,7 +791,7 @@ export default function RoundtableScreen({
                 <div key={p.id} className={cn("p-3 rounded-lg transition-colors group relative", isEager ? "bg-amber-50" : "hover:bg-neutral-50")}>
                   <div className="flex items-center justify-between">
                     <div className="font-bold text-base" style={{ color: p.color }}>{displayName}</div>
-                    {isEager && (
+                    {mode === 'debate' && isEager && (
                       <button 
                         onClick={() => triggerNextPhilosopher(displayName)}
                         className="flex items-center gap-1 text-[10px] font-medium text-amber-700 bg-amber-100 hover:bg-amber-200 px-1.5 py-0.5 rounded cursor-pointer transition-colors"
@@ -752,7 +802,7 @@ export default function RoundtableScreen({
                     )}
                   </div>
                   <div className="text-xs text-neutral-500 line-clamp-1 mt-1">{isZh ? p.description : p.descriptionEn}</div>
-                  {role === 'host' && (
+                  {mode === 'debate' && role === 'host' && (
                     <div className="mt-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                       <button 
                         onClick={() => triggerNextPhilosopher(displayName)}
@@ -924,14 +974,25 @@ export default function RoundtableScreen({
 
           {/* Input Area */}
           <div className="absolute bottom-0 left-0 right-0 bg-white/80 backdrop-blur-md border-t border-neutral-200 p-4">
-            {stage === 'free' && !isLoading && (
+            {mode !== 'chat' && stage === 'free' && !isLoading && (
               <div className="flex justify-center mb-4">
                 <button
                   onClick={() => triggerNextPhilosopher()}
                   className="px-6 py-2.5 bg-neutral-900 text-white rounded-full font-medium shadow-md hover:bg-neutral-800 hover:shadow-lg transition-all flex items-center gap-2 text-sm"
                 >
-                  <Target className="w-4 h-4" /> 
+                  <Target className="w-4 h-4" />
                   {t.continueListening} {eagerSpeaker && `(${getPhilosopherDisplay(eagerSpeaker)} ${t.eagerToSpeak})`}
+                </button>
+              </div>
+            )}
+            {mode === 'chat' && messages.length === 0 && !isLoading && (
+              <div className="flex justify-center mb-4">
+                <button
+                  onClick={() => triggerNextPhilosopher()}
+                  className="px-6 py-2.5 bg-indigo-600 text-white rounded-full font-medium shadow-md hover:bg-indigo-700 hover:shadow-lg transition-all flex items-center gap-2 text-sm"
+                >
+                  <MessageCircle className="w-4 h-4" />
+                  {t.startConversation}
                 </button>
               </div>
             )}
@@ -947,9 +1008,11 @@ export default function RoundtableScreen({
                     }
                   }}
                   placeholder={
-                    stage === 'opening' && unSpokenPhilosophers.length === 0 
-                      ? (isZh ? '请发表您的观点以进入自由交锋阶段（或手动进入下一阶段）...' : 'Share your view to enter free debate (or proceed manually)...')
-                      : (role === 'host' ? t.hostPlaceholder : t.participantPlaceholder)
+                    mode === 'chat'
+                      ? t.chatPlaceholder
+                      : (stage === 'opening' && unSpokenPhilosophers.length === 0
+                        ? (isZh ? '请发表您的观点以进入自由交锋阶段（或手动进入下一阶段）...' : 'Share your view to enter free debate (or proceed manually)...')
+                        : (role === 'host' ? t.hostPlaceholder : t.participantPlaceholder))
                   }
                   className="w-full pl-4 pr-12 py-3 max-h-32 min-h-[52px] bg-white border border-neutral-300 shadow-sm rounded-xl focus:ring-2 focus:ring-neutral-900 focus:border-neutral-900 outline-none resize-none transition-all"
                   rows={1}
@@ -1005,19 +1068,37 @@ export default function RoundtableScreen({
           
           <div className="p-4 border-t border-b border-neutral-100 mt-auto">
             <h3 className="text-sm font-semibold text-neutral-900 mb-3">{t.mindmap}</h3>
-            <CollapsibleSection><div className="space-y-2">
+            <CollapsibleSection>
+            <div className="space-y-2">
               {messages.filter(m => m.relations && m.relations.length > 0).map(m => (
-                <div key={`rel-${m.id}`} className="text-xs p-2 bg-neutral-50 rounded">
-                  <span className="font-bold" style={{ color: getPhilosopherColor(m.author) }}>{getPhilosopherDisplay(m.author)}</span>
-                  {m.relations?.map((r, i) => (
-                    <span key={i} className="text-neutral-500">
-                      {' '}
-                      {r.type === 'agree' ? t.agree : r.type === 'disagree' ? t.disagree : t.supplement}
-                      {' '}
-                      <span className="font-bold" style={{ color: getPhilosopherColor(r.target) }}>
-                        {getPhilosopherDisplay(r.target)}
-                      </span>
+                <div key={`rel-${m.id}`} className="text-xs p-3 bg-neutral-50 rounded-lg border border-neutral-100">
+                  <div className="flex items-center gap-1.5 mb-1.5">
+                    <span className="font-bold text-neutral-800" style={{ color: getPhilosopherColor(m.author) }}>
+                      {getPhilosopherDisplay(m.author)}
                     </span>
+                  </div>
+                  {m.relations?.map((r, i) => (
+                    <div key={i} className="mb-1 ml-2 border-l-2 pl-2" style={{ borderColor: r.type === 'agree' ? '#22c55e' : r.type === 'disagree' ? '#ef4444' : '#3b82f6' }}>
+                      <div className="flex items-center gap-1">
+                        <span className={cn(
+                          "text-[10px] font-medium px-1.5 py-0.5 rounded-full",
+                          r.type === 'agree' ? "bg-green-100 text-green-700" :
+                          r.type === 'disagree' ? "bg-red-100 text-red-700" :
+                          r.type === 'question' ? "bg-amber-100 text-amber-700" :
+                          "bg-blue-100 text-blue-700"
+                        )}>
+                          {r.type === 'agree' ? t.agree : r.type === 'disagree' ? t.disagree : r.type === 'question' ? t.question : t.supplement}
+                        </span>
+                        <span className="font-semibold text-neutral-700" style={{ color: getPhilosopherColor(r.target) }}>
+                          {getPhilosopherDisplay(r.target)}
+                        </span>
+                      </div>
+                      {r.detail && (
+                        <p className="text-neutral-500 mt-0.5 ml-0.5 leading-relaxed">
+                          {r.detail}
+                        </p>
+                      )}
+                    </div>
                   ))}
                 </div>
               ))}

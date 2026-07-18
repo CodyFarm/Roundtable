@@ -3,16 +3,21 @@ import crypto from "node:crypto";
 import {
   findInvitationCode,
   markInvitationCodeUsed,
+  releaseInvitationCode,
   findUserByUsername,
   saveUser,
+  deleteUser,
   createToken,
   findToken,
+  deleteUserTokens,
   getSharedPhilosophers,
   saveSharedPhilosopher,
   deleteSharedPhilosopher,
+  deleteSharedPhilosophersByUser,
   getSharedSessions,
   saveSharedSession,
   deleteSharedSession,
+  deleteSharedSessionsByUser,
 } from "./data-layer";
 
 // ── Lazy-load AI SDKs ──────────────────────────────────────────────────
@@ -64,11 +69,11 @@ export function createApp() {
   }
 
   /** Extract authenticated user from Authorization header. Returns null if not logged in. */
-  function getAuthUser(req: express.Request): { userId: string; username: string } | null {
+  async function getAuthUser(req: express.Request): Promise<{ userId: string; username: string } | null> {
     const header = req.headers.authorization;
     if (!header || !header.startsWith("Bearer ")) return null;
     const token = header.slice(7);
-    const entry = findToken(token);
+    const entry = await findToken(token);
     if (!entry) return null;
     return { userId: entry.userId, username: entry.username };
   }
@@ -76,7 +81,7 @@ export function createApp() {
   // ── Auth routes ────────────────────────────────────────────────────
 
   // Register
-  app.post("/api/auth/register", (req, res) => {
+  app.post("/api/auth/register", async (req, res) => {
     try {
       const { username, password, invitationCode } = req.body;
 
@@ -102,13 +107,13 @@ export function createApp() {
       }
 
       // Check if username already exists
-      if (findUserByUsername(username.trim())) {
+      if (await findUserByUsername(username.trim())) {
         res.status(409).json({ error: "Username already taken" });
         return;
       }
 
       // Validate invitation code
-      const codeEntry = findInvitationCode(invitationCode.trim().toUpperCase());
+      const codeEntry = await findInvitationCode(invitationCode.trim().toUpperCase());
       if (!codeEntry) {
         res.status(400).json({ error: "Invalid or already used invitation code" });
         return;
@@ -124,13 +129,13 @@ export function createApp() {
         salt,
         createdAt: new Date().toISOString(),
       };
-      saveUser(user);
+      await saveUser(user);
 
       // Mark invitation code as used
-      markInvitationCodeUsed(codeEntry.code, username.trim());
+      await markInvitationCodeUsed(codeEntry.code, username.trim());
 
       // Create session token
-      const tokenEntry = createToken(user.id, user.username);
+      const tokenEntry = await createToken(user.id, user.username);
 
       res.json({
         id: user.id,
@@ -144,7 +149,7 @@ export function createApp() {
   });
 
   // Login
-  app.post("/api/auth/login", (req, res) => {
+  app.post("/api/auth/login", async (req, res) => {
     try {
       const { username, password } = req.body;
 
@@ -153,7 +158,7 @@ export function createApp() {
         return;
       }
 
-      const user = findUserByUsername(username.trim());
+      const user = await findUserByUsername(username.trim());
       if (!user) {
         res.status(401).json({ error: "Invalid username or password" });
         return;
@@ -165,7 +170,7 @@ export function createApp() {
         return;
       }
 
-      const tokenEntry = createToken(user.id, user.username);
+      const tokenEntry = await createToken(user.id, user.username);
 
       res.json({
         id: user.id,
@@ -179,8 +184,8 @@ export function createApp() {
   });
 
   // Get current user
-  app.get("/api/auth/me", (req, res) => {
-    const user = getAuthUser(req);
+  app.get("/api/auth/me", async (req, res) => {
+    const user = await getAuthUser(req);
     if (!user) {
       res.status(401).json({ error: "Not authenticated" });
       return;
@@ -188,11 +193,46 @@ export function createApp() {
     res.json(user);
   });
 
+  // Delete account (requires auth)
+  app.delete("/api/auth/account", async (req, res) => {
+    const user = await getAuthUser(req);
+    if (!user) {
+      res.status(401).json({ error: "You must be logged in to delete your account" });
+      return;
+    }
+
+    try {
+      // Release the invitation code this user consumed
+      await releaseInvitationCode(user.username);
+
+      // Delete user's tokens
+      await deleteUserTokens(user.userId);
+
+      // Delete user's shared philosophers
+      await deleteSharedPhilosophersByUser(user.userId);
+
+      // Delete user's shared sessions
+      await deleteSharedSessionsByUser(user.userId);
+
+      // Delete the user account
+      const deleted = await deleteUser(user.userId);
+      if (!deleted) {
+        res.status(404).json({ error: "Account not found" });
+        return;
+      }
+
+      res.json({ ok: true, message: "Account deleted successfully" });
+    } catch (error: any) {
+      console.error("Delete account error:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   // ── Shared Philosophers routes ──────────────────────────────────────
 
   // Share a philosopher (requires auth)
-  app.post("/api/philosophers/share", (req, res) => {
-    const user = getAuthUser(req);
+  app.post("/api/philosophers/share", async (req, res) => {
+    const user = await getAuthUser(req);
     if (!user) {
       res.status(401).json({ error: "You must be logged in to share philosophers" });
       return;
@@ -212,7 +252,7 @@ export function createApp() {
         philosopher,
         createdAt: new Date().toISOString(),
       };
-      saveSharedPhilosopher(entry);
+      await saveSharedPhilosopher(entry);
       res.json(entry);
     } catch (error: any) {
       console.error("Share philosopher error:", error);
@@ -221,9 +261,9 @@ export function createApp() {
   });
 
   // List all shared philosophers (no auth required)
-  app.get("/api/philosophers/shared", (_req, res) => {
+  app.get("/api/philosophers/shared", async (_req, res) => {
     try {
-      const list = getSharedPhilosophers();
+      const list = await getSharedPhilosophers();
       res.json(list);
     } catch (error: any) {
       console.error("List shared philosophers error:", error);
@@ -232,15 +272,15 @@ export function createApp() {
   });
 
   // Delete own shared philosopher (requires auth)
-  app.delete("/api/philosophers/shared/:id", (req, res) => {
-    const user = getAuthUser(req);
+  app.delete("/api/philosophers/shared/:id", async (req, res) => {
+    const user = await getAuthUser(req);
     if (!user) {
       res.status(401).json({ error: "You must be logged in" });
       return;
     }
 
     try {
-      const success = deleteSharedPhilosopher(req.params.id, user.userId);
+      const success = await deleteSharedPhilosopher(req.params.id, user.userId);
       if (!success) {
         res.status(404).json({ error: "Philosopher not found or not yours" });
         return;
@@ -255,8 +295,8 @@ export function createApp() {
   // ── Shared Sessions routes ──────────────────────────────────────────
 
   // Share a session (requires auth)
-  app.post("/api/sessions/share", (req, res) => {
-    const user = getAuthUser(req);
+  app.post("/api/sessions/share", async (req, res) => {
+    const user = await getAuthUser(req);
     if (!user) {
       res.status(401).json({ error: "You must be logged in to share sessions" });
       return;
@@ -276,7 +316,7 @@ export function createApp() {
         session,
         createdAt: new Date().toISOString(),
       };
-      saveSharedSession(entry);
+      await saveSharedSession(entry);
       res.json(entry);
     } catch (error: any) {
       console.error("Share session error:", error);
@@ -285,15 +325,15 @@ export function createApp() {
   });
 
   // List own shared sessions (requires auth, only own)
-  app.get("/api/sessions/shared", (req, res) => {
-    const user = getAuthUser(req);
+  app.get("/api/sessions/shared", async (req, res) => {
+    const user = await getAuthUser(req);
     if (!user) {
       res.status(401).json({ error: "You must be logged in to view your sessions" });
       return;
     }
 
     try {
-      const list = getSharedSessions().filter((s) => s.userId === user.userId);
+      const list = (await getSharedSessions()).filter((s) => s.userId === user.userId);
       res.json(list);
     } catch (error: any) {
       console.error("List shared sessions error:", error);
@@ -302,15 +342,15 @@ export function createApp() {
   });
 
   // Delete own shared session (requires auth)
-  app.delete("/api/sessions/shared/:id", (req, res) => {
-    const user = getAuthUser(req);
+  app.delete("/api/sessions/shared/:id", async (req, res) => {
+    const user = await getAuthUser(req);
     if (!user) {
       res.status(401).json({ error: "You must be logged in" });
       return;
     }
 
     try {
-      const success = deleteSharedSession(req.params.id, user.userId);
+      const success = await deleteSharedSession(req.params.id, user.userId);
       if (!success) {
         res.status(404).json({ error: "Session not found or not yours" });
         return;
@@ -491,8 +531,48 @@ Otherwise, choose the philosopher who would most logically respond next (someone
 Keep responses in character, concise (around 150-200 words), and directly engaging with the previous points.
 CRITICAL INSTRUCTIONS:
 1. Please generate ALL your responses in ${isZh ? 'Chinese' : 'English'}.
-2. If Stage is 'Opening statements', the speaker MUST briefly introduce themselves and their core philosophy before stating their basic perspective on the topic.
+2. Use **bold** markdown frequently to highlight key philosophical concepts, important terminology, and core arguments in your response. Bold at least 3-5 key terms or phrases in each reply.
+3. If Stage is 'Opening statements', the speaker MUST briefly introduce themselves and their core philosophy before stating their basic perspective on the topic.
+4. For each relation, include a 'detail' field (1 sentence) describing the specific viewpoint being agreed/disagreed/supplemented with.
 Also, analyze the relationship of this new message to previous messages (e.g., agreeing with X, disagreeing with Y) for a mind map.`;
+  };
+
+  const getChatInstruction = (topic: string, philosopher: any, language: string, lastMessageContent: string = "") => {
+    const isZh = language === 'zh';
+    const name = isZh ? philosopher.name : philosopher.nameEn;
+    const description = isZh ? philosopher.description : philosopher.descriptionEn;
+
+    let customPromptBlock = '';
+    let refContent = '';
+    if (philosopher.fileContent) {
+      const query = `${topic} ${lastMessageContent}`;
+      refContent = retrieveRelevantChunks(philosopher.fileContent, query, 1000);
+    }
+    if (philosopher.customPrompt || refContent) {
+      customPromptBlock = `\nCharacter & Persona instructions for ${name}:
+${philosopher.customPrompt || ''}
+${refContent ? `Relevant reference text from their works/writings:\n"""\n${refContent}\n"""\nWhen highly relevant to the topic, quote directly from your reference text (use markdown blockquotes with chapter/section name if inferable).` : ''}`;
+    }
+
+    const topicGuidance = topic
+      ? `The user wants to discuss: "${topic}". Engage with this topic naturally, sharing your philosophical perspective.`
+      : `No specific topic was set. Start with a warm, natural greeting — introduce yourself briefly in character, then invite the user to discuss whatever they'd like. Be open and welcoming.`;
+
+    return `You are now embodying ${name}, having a one-on-one conversation with the user.
+${description ? `About ${name}: ${description}` : ''}
+${customPromptBlock}
+
+${topicGuidance}
+
+CRITICAL INSTRUCTIONS:
+1. You ARE ${name}. Speak entirely in character — use their authentic voice, mannerisms, and philosophical framework.
+2. Generate ALL your responses in ${isZh ? 'Chinese' : 'English'}.
+3. Use **bold** markdown VERY FREQUENTLY to highlight key philosophical concepts, important terminology, and core ideas. Bold at least 3-5 key terms or phrases in EVERY reply.
+4. Keep responses thoughtful and engaging (around 150-250 words).
+5. Be conversational — this is a dialogue, not a lecture. Ask the user questions occasionally to deepen the discussion.
+6. For each response, analyze your relationship to the user's previous message. Include a 'relations' array indicating whether you are agreeing, disagreeing, supplementing, or questioning specific points the user made. For each relation, include a 'detail' field (1 sentence) describing the specific viewpoint.
+7. Do NOT generate a response for the user. Only respond as ${name}.
+8. The 'speaker' field MUST always be "${name}".`;
   };
 
   const getSocraticInstruction = (topic: string, language: string) => `Based on the current discussion about "${topic}", generate 3 Socratic, thought-provoking questions that the user could ask to deepen the debate. Keep them concise. Generate questions in ${language === 'zh' ? 'Chinese' : 'English'}.`;
@@ -524,7 +604,8 @@ Also, analyze the relationship of this new message to previous messages (e.g., a
                 type: Type.OBJECT,
                 properties: {
                   type: { type: Type.STRING, description: "'agree', 'disagree', 'supplement', 'question'" },
-                  target: { type: Type.STRING, description: "Name of the person they are responding to" }
+                  target: { type: Type.STRING, description: "Name of the person they are responding to" },
+                  detail: { type: Type.STRING, description: "One sentence describing the specific viewpoint being agreed/disagreed/supplemented" }
                 }
               }
             }
@@ -572,7 +653,7 @@ Also, analyze the relationship of this new message to previous messages (e.g., a
       model: model,
       messages: [
         { role: "system", content: inst },
-        { role: "user", content: prompt + "\n\nRespond strictly with a JSON object containing { speaker, content, nextEagerSpeaker (optional), relations: [{type, target}] }. Do not include any other text." }
+        { role: "user", content: prompt + "\n\nRespond strictly with a JSON object containing { speaker, content, nextEagerSpeaker (optional), relations: [{type, target, detail}] }. The 'detail' field should be a one-sentence description of the specific viewpoint. Do not include any other text." }
       ]
     };
 
@@ -623,7 +704,7 @@ Also, analyze the relationship of this new message to previous messages (e.g., a
       system: instruction,
       thinking: thinkingConfig,
       messages: [
-        { role: "user", content: prompt + "\n\nRespond strictly with a JSON object containing { speaker, content, nextEagerSpeaker (optional), relations: [{type, target}] }. Do not include any other text." }
+        { role: "user", content: prompt + "\n\nRespond strictly with a JSON object containing { speaker, content, nextEagerSpeaker (optional), relations: [{type, target, detail}] }. The 'detail' field should be a one-sentence description of the specific viewpoint. Do not include any other text." }
       ]
     });
     const text = response.content.filter(c => c.type === 'text').map((c: any) => c.text).join("");
@@ -634,18 +715,30 @@ Also, analyze the relationship of this new message to previous messages (e.g., a
 
   app.post("/api/chat", async (req, res) => {
     try {
-      const { topic, philosophers, messages, currentStage, targetPhilosopher } = req.body;
+      const { topic, philosophers, messages, currentStage, targetPhilosopher, mode } = req.body;
       const config = getApiConfig(req);
       const language = (req.headers["x-app-language"] as string) || "zh";
 
       const lastMessage = messages && messages.length > 0 ? messages[messages.length - 1] : null;
       const lastMessageContent = lastMessage ? lastMessage.content : "";
 
-      const instruction = getSystemInstruction(topic, currentStage, philosophers, language, lastMessageContent);
-      const formattedMessages = messages.map((m: any) => `[${m.role === "user" ? "User/Participant" : m.author}]: ${m.content}`).join("\n");
-      const recentSpeakers = messages.slice(-4).map((m: any) => m.author).filter((a: string) => a !== "User/Participant" && a !== "主持人");
+      let instruction: string;
+      let prompt: string;
 
-      const prompt = `Current conversation:\n${formattedMessages}\n\nRecent speakers: ${recentSpeakers.join(", ")}. If 'auto-select', try NOT to pick someone who just spoke unless absolutely necessary.\n\nTarget next speaker: ${targetPhilosopher || "auto-select"}\nGenerate the next response.`;
+      if (mode === 'chat') {
+        // ── Chat mode: one-on-one dialogue with a single philosopher ──
+        const philosopher = philosophers[0];
+        instruction = getChatInstruction(topic || '', philosopher, language, lastMessageContent);
+        const formattedMessages = messages.map((m: any) => `[${m.role === "user" ? "User" : m.author}]: ${m.content}`).join("\n");
+        prompt = `Current conversation:\n${formattedMessages}\n\nGenerate the next response as ${language === 'zh' ? philosopher.name : philosopher.nameEn}.`;
+      } else {
+        // ── Debate mode: multi-philosopher roundtable ──
+        instruction = getSystemInstruction(topic, currentStage, philosophers, language, lastMessageContent);
+        const formattedMessages = messages.map((m: any) => `[${m.role === "user" ? "User/Participant" : m.author}]: ${m.content}`).join("\n");
+        const recentSpeakers = messages.slice(-4).map((m: any) => m.author).filter((a: string) => a !== "User/Participant" && a !== "主持人");
+
+        prompt = `Current conversation:\n${formattedMessages}\n\nRecent speakers: ${recentSpeakers.join(", ")}. If 'auto-select', try NOT to pick someone who just spoke unless absolutely necessary.\n\nTarget next speaker: ${targetPhilosopher || "auto-select"}\nGenerate the next response.`;
+      }
 
       let data;
       if (config.provider === 'openai' || config.provider === 'custom' || config.provider === 'deepseek') {
@@ -775,12 +868,17 @@ Also, analyze the relationship of this new message to previous messages (e.g., a
 
   app.post("/api/summary", async (req, res) => {
     try {
-      const { topic, messages } = req.body;
+      const { topic, messages, mode } = req.body;
       const config = getApiConfig(req);
       const language = (req.headers["x-app-language"] || "zh");
 
       const formattedMessages = messages.map((m) => `[${m.author}]: ${m.content}`).join("\n");
-      const prompt = `Based on the following debate on the topic "${topic}", please provide a summary.\nFor each philosopher, summarize:\n1. Their updated core viewpoint.\n2. Which specific parts of the opponents' viewpoints they are criticizing.\nFormat as clean Markdown. Generate in ${language === 'zh' ? 'Chinese' : 'English'}.\n\nDebate History:\n${formattedMessages}`;
+      let prompt: string;
+      if (mode === 'chat') {
+        prompt = `Based on the following conversation${topic ? ` about "${topic}"` : ''}, please provide a comprehensive summary.\nSummarize:\n1. The philosopher's core viewpoints expressed during the dialogue.\n2. Key insights and philosophical concepts discussed.\n3. Any shifts or developments in their perspective.\n4. The main points the user raised and how the philosopher responded to them.\nFormat as clean Markdown. Generate in ${language === 'zh' ? 'Chinese' : 'English'}.\n\nConversation History:\n${formattedMessages}`;
+      } else {
+        prompt = `Based on the following debate on the topic "${topic}", please provide a summary.\nFor each philosopher, summarize:\n1. Their updated core viewpoint.\n2. Which specific parts of the opponents' viewpoints they are criticizing.\nFormat as clean Markdown. Generate in ${language === 'zh' ? 'Chinese' : 'English'}.\n\nDebate History:\n${formattedMessages}`;
+      }
 
       let summaryText;
       if (!config.key) {

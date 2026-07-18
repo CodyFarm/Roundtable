@@ -2,12 +2,13 @@ import { useState, useEffect } from 'react';
 import SetupScreen from './components/SetupScreen';
 import RoundtableScreen from './components/RoundtableScreen';
 import AuthModal from './components/AuthModal';
-import { Stage, Philosopher, Message, ApiConfig, Language, SavedSession, Summary, UserInfo } from './types';
+import { Stage, Philosopher, Message, ApiConfig, Language, SavedSession, Summary, UserInfo, SessionMode } from './types';
 
 export default function App() {
   const [stage, setStage] = useState<Stage>('setup');
   const [topic, setTopic] = useState('');
   const [philosophers, setPhilosophers] = useState<Philosopher[]>([]);
+  const [mode, setMode] = useState<SessionMode>('debate');
   const [apiConfig, setApiConfig] = useState<ApiConfig>({ provider: 'deepseek', key: '' });
   const [messages, setMessages] = useState<Message[]>([]);
   const [summaries, setSummaries] = useState<Summary[]>([]);
@@ -51,19 +52,20 @@ export default function App() {
     }
   }, []);
 
-  const handleStart = (selectedTopic: string, selectedPhilosophers: Philosopher[], config: ApiConfig, lang: Language, restoreSessionId?: string, restoreMessages?: Message[], restoreSummaries?: Summary[], restoreStage?: Stage, restoreName?: string) => {
+  const handleStart = (selectedTopic: string, selectedPhilosophers: Philosopher[], config: ApiConfig, lang: Language, selectedMode: SessionMode, restoreSessionId?: string, restoreMessages?: Message[], restoreSummaries?: Summary[], restoreStage?: Stage, restoreName?: string, restoreMode?: SessionMode) => {
     if (restoreSessionId) {
       setSessionId(restoreSessionId);
       setSessionName(restoreName || '');
       setMessages(restoreMessages || []);
       setSummaries(restoreSummaries || []);
       setStage(restoreStage || 'opening');
+      setMode(restoreMode || 'debate');
     } else {
       setSessionId(null);
       setSessionName('');
       setMessages([]);
       setSummaries([]);
-  
+      setMode(selectedMode);
     }
     setTopic(selectedTopic);
     setPhilosophers(selectedPhilosophers);
@@ -71,7 +73,7 @@ export default function App() {
     setLanguage(lang);
     localStorage.setItem('api_config', JSON.stringify(config));
     localStorage.setItem('app_language', lang);
-    if (!restoreSessionId) setStage('opening');
+    if (!restoreSessionId) setStage(selectedMode === 'chat' ? 'chat' : 'opening');
   };
 
 
@@ -85,7 +87,8 @@ export default function App() {
       philosophers,
       stage,
       messages,
-      summaries
+      summaries,
+      mode
     };
     
     const saved = localStorage.getItem('saved_sessions');
@@ -109,6 +112,7 @@ export default function App() {
     setSummaries([]);
     setSessionId(null);
     setSessionName('');
+    setMode('debate');
   };
 
   const handleLogin = (userInfo: UserInfo) => {
@@ -132,6 +136,7 @@ export default function App() {
           user={user}
           onOpenAuth={() => setIsAuthModalOpen(true)}
           onLogout={handleLogout}
+          initialMode={mode}
         />
       ) : (
         <RoundtableScreen
@@ -149,6 +154,7 @@ export default function App() {
           sessionName={sessionName}
           onEnd={handleEnd}
           user={user}
+          mode={mode}
         />
       )}
 

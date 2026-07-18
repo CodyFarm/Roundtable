@@ -1,7 +1,8 @@
-export type Stage = 'setup' | 'opening' | 'free' | 'closing';
+export type Stage = 'setup' | 'opening' | 'free' | 'closing' | 'chat';
 export type Role = 'host' | 'participant';
 export type ApiProvider = 'gemini' | 'openai' | 'anthropic' | 'deepseek' | 'custom';
 export type Language = 'zh' | 'en';
+export type SessionMode = 'debate' | 'chat';
 
 export interface ApiConfig {
   provider: ApiProvider;
@@ -30,6 +31,7 @@ export interface Philosopher {
 export interface Relation {
   type: 'agree' | 'disagree' | 'supplement' | 'question';
   target: string;
+  detail?: string;
 }
 
 export interface Message {
@@ -72,6 +74,7 @@ export interface SavedSession {
   stage: Stage;
   messages: Message[];
   summaries: Summary[];
+  mode: SessionMode;
 }
 
 // ── Auth & Account ─────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { Philosopher, PRESET_PHILOSOPHERS, ApiConfig, ApiProvider, Language, SavedSession, Message, Summary, Stage, UserInfo, SharedPhilosopherEntry, SharedSessionEntry } from '../types';
-import { Settings, Users, MessageSquareQuote, Globe, Plus, Edit2, X, Upload, Trash2, BookOpen, User, LogOut, Cloud, Share2, Download } from 'lucide-react';
+import { Philosopher, PRESET_PHILOSOPHERS, ApiConfig, ApiProvider, Language, SavedSession, Message, Summary, Stage, UserInfo, SharedPhilosopherEntry, SharedSessionEntry, SessionMode } from '../types';
+import { Settings, Users, MessageSquareQuote, Globe, Plus, Edit2, X, Upload, Trash2, BookOpen, User, LogOut, Cloud, Share2, Download, MessageCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import * as pdfjsLib from 'pdfjs-dist';
 
@@ -8,16 +8,18 @@ import * as pdfjsLib from 'pdfjs-dist';
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
 interface Props {
-  onStart: (topic: string, philosophers: Philosopher[], apiConfig: ApiConfig, language: Language, restoreSessionId?: string, restoreMessages?: Message[], restoreSummaries?: Summary[], restoreStage?: Stage, restoreName?: string) => void;
+  onStart: (topic: string, philosophers: Philosopher[], apiConfig: ApiConfig, language: Language, mode: SessionMode, restoreSessionId?: string, restoreMessages?: Message[], restoreSummaries?: Summary[], restoreStage?: Stage, restoreName?: string, restoreMode?: SessionMode) => void;
   initialApiConfig: ApiConfig;
   initialLanguage: Language;
   user: UserInfo | null;
   onOpenAuth: () => void;
   onLogout: () => void;
+  initialMode: SessionMode;
 }
 
-export default function SetupScreen({ onStart, initialApiConfig, initialLanguage, user, onOpenAuth, onLogout }: Props) {
+export default function SetupScreen({ onStart, initialApiConfig, initialLanguage, user, onOpenAuth, onLogout, initialMode }: Props) {
   const [topic, setTopic] = useState('');
+  const [mode, setMode] = useState<SessionMode>(initialMode);
   
   const [apiProvider, setApiProvider] = useState<ApiProvider>(initialApiConfig.provider || 'deepseek');
   const [apiKey, setApiKey] = useState(initialApiConfig.key || '');
@@ -51,6 +53,8 @@ export default function SetupScreen({ onStart, initialApiConfig, initialLanguage
   const [cloudSessions, setCloudSessions] = useState<SharedSessionEntry[]>([]);
   const [shareToPool, setShareToPool] = useState(false);
   const [loadingShared, setLoadingShared] = useState(false);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   useEffect(() => {
     const saved = localStorage.getItem('saved_sessions');
     if (saved) {
@@ -102,12 +106,12 @@ export default function SetupScreen({ onStart, initialApiConfig, initialLanguage
   }, [user]);
   
   const restoreSession = (s: SavedSession) => {
-    onStart(s.topic, s.philosophers, { provider: apiProvider, key: apiKey, baseUrl: apiBaseUrl, model: apiModel, thinkingDepth }, lang, s.id, s.messages, s.summaries, s.stage, s.name);
+    onStart(s.topic, s.philosophers, { provider: apiProvider, key: apiKey, baseUrl: apiBaseUrl, model: apiModel, thinkingDepth }, lang, s.mode || 'debate', s.id, s.messages, s.summaries, s.stage, s.name, s.mode || 'debate');
   };
 
   const restoreCloudSession = (entry: SharedSessionEntry) => {
     const s = entry.session;
-    onStart(s.topic, s.philosophers, { provider: apiProvider, key: apiKey, baseUrl: apiBaseUrl, model: apiModel, thinkingDepth }, lang, s.id, s.messages, s.summaries, s.stage, s.name);
+    onStart(s.topic, s.philosophers, { provider: apiProvider, key: apiKey, baseUrl: apiBaseUrl, model: apiModel, thinkingDepth }, lang, s.mode || 'debate', s.id, s.messages, s.summaries, s.stage, s.name, s.mode || 'debate');
   };
   
   const deleteSession = (id: string, e: React.MouseEvent) => {
@@ -423,9 +427,20 @@ export default function SetupScreen({ onStart, initialApiConfig, initialLanguage
       apiDescOpenai: "配置 OpenAI 兼容的 API (如 DeepSeek, Kimi, 或 OpenAI)。",
       startBtn: "开启圆桌会议",
       langSelect: "语言",
+      // Chat mode
+      chatTitle: "与思想家对话",
+      chatDesc: "选择一位你仰慕的哲学家，进行一对一的深度对话。话题可选。",
+      chatTopicLabel: "话题 (可选)",
+      chatTopicPlaceholder: "可选：输入你想聊的话题，留空则由哲学家自由开场...",
+      chatInviteLabel: "选择哲学家 (1位)",
+      chatStartBtn: "开始对话",
+      modeLabel: "模式选择",
+      debateMode: "辩论模式",
+      chatMode: "对话模式",
+      chatMinError: "请选择一位哲学家",
     },
     en: {
-      title: "Philosopher's Roundtable",
+      title: "Phils Roundtable",
       desc: "Invite history's greatest thinkers for a debate across time on a topic you care about.",
       topicLabel: "Debate Topic",
       topicPlaceholder: "e.g., Does free will exist?",
@@ -438,6 +453,17 @@ export default function SetupScreen({ onStart, initialApiConfig, initialLanguage
       apiDescOpenai: "Configure an OpenAI compatible API (e.g. OpenAI, DeepSeek, etc).",
       startBtn: "Start Roundtable",
       langSelect: "Language",
+      // Chat mode
+      chatTitle: "Dialogue with a Thinker",
+      chatDesc: "Choose a philosopher you admire and have a deep one-on-one conversation. Topic optional.",
+      chatTopicLabel: "Topic (Optional)",
+      chatTopicPlaceholder: "Optional: Enter a topic to discuss, or leave blank for the philosopher to start...",
+      chatInviteLabel: "Select a Philosopher (1)",
+      chatStartBtn: "Start Dialogue",
+      modeLabel: "Mode",
+      debateMode: "Debate",
+      chatMode: "Dialogue",
+      chatMinError: "Please select one philosopher",
     }
   };
 
@@ -448,9 +474,15 @@ export default function SetupScreen({ onStart, initialApiConfig, initialLanguage
     if (newSet.has(id)) {
       newSet.delete(id);
     } else {
-      if (newSet.size >= 6) {
-        setError(currentT.maxError);
-        return;
+      const maxCount = mode === 'chat' ? 1 : 6;
+      if (newSet.size >= maxCount) {
+        if (mode === 'chat') {
+          // In chat mode, replace the selection (only 1 philosopher allowed)
+          newSet.clear();
+        } else {
+          setError(currentT.maxError);
+          return;
+        }
       }
       newSet.add(id);
     }
@@ -496,15 +528,16 @@ export default function SetupScreen({ onStart, initialApiConfig, initialLanguage
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!topic.trim()) {
+    // Topic is required only in debate mode
+    if (mode === 'debate' && !topic.trim()) {
       setError(currentT.topicError);
       return;
     }
-    if (selectedIds.size < 2) {
-      setError(currentT.minError);
+    if (selectedIds.size < (mode === 'chat' ? 1 : 2)) {
+      setError(mode === 'chat' ? (lang === 'zh' ? '请选择一位哲学家' : 'Please select one philosopher') : currentT.minError);
       return;
     }
-    
+
     // Auto-correct provider if they pasted an OpenAI key but forgot to change the dropdown
     let finalProvider = apiProvider;
     if (apiProvider === 'gemini' && apiKey.trim().startsWith('sk-')) {
@@ -517,7 +550,29 @@ export default function SetupScreen({ onStart, initialApiConfig, initialLanguage
       key: apiKey.trim(),
       baseUrl: apiBaseUrl.trim() || undefined,
       model: apiModel.trim() || undefined
-    }, lang);
+    }, lang, mode);
+  };
+
+  const handleDeleteAccount = async () => {
+    if (!user) return;
+    setIsDeleting(true);
+    try {
+      const res = await fetch('/api/auth/account', {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${user.token}` }
+      });
+      if (res.ok) {
+        onLogout();
+        setIsDeleteModalOpen(false);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || (lang === 'zh' ? '注销失败，请重试' : 'Failed to delete account'));
+      }
+    } catch (e) {
+      alert(lang === 'zh' ? '网络错误，注销失败' : 'Network error');
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   // Filter out local sessions that are already synced to cloud
@@ -546,6 +601,14 @@ export default function SetupScreen({ onStart, initialApiConfig, initialLanguage
                 <LogOut className="w-3.5 h-3.5" />
                 {lang === 'zh' ? '退出' : 'Logout'}
               </button>
+              <button
+                onClick={() => setIsDeleteModalOpen(true)}
+                className="flex items-center gap-1.5 text-xs text-neutral-400 hover:text-red-600 transition-colors bg-white px-2.5 py-1.5 rounded-full shadow-sm border border-neutral-200"
+                title={lang === 'zh' ? '注销账户' : 'Delete Account'}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                {lang === 'zh' ? '注销' : 'Del'}
+              </button>
             </div>
           ) : (
             <button
@@ -570,16 +633,22 @@ export default function SetupScreen({ onStart, initialApiConfig, initialLanguage
         </div>
       </div>
 
-      <motion.div 
+      <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         className="text-center mb-12"
       >
         <h1 className="text-4xl font-serif font-bold text-neutral-900 tracking-tight flex items-center justify-center gap-3">
-          <MessageSquareQuote className="w-10 h-10 text-neutral-700" />
-          {currentT.title}
+          {mode === 'chat' ? (
+            <MessageCircle className="w-10 h-10 text-neutral-700" />
+          ) : (
+            <MessageSquareQuote className="w-10 h-10 text-neutral-700" />
+          )}
+          {mode === 'chat' ? currentT.chatTitle : currentT.title}
         </h1>
-        <p className="mt-4 text-lg text-neutral-600">{currentT.desc}</p>
+        <p className="mt-4 text-lg text-neutral-600">
+          {mode === 'chat' ? currentT.chatDesc : currentT.desc}
+        </p>
       </motion.div>
 
 
@@ -687,6 +756,24 @@ export default function SetupScreen({ onStart, initialApiConfig, initialLanguage
           {lang === 'zh' ? '新建会话' : 'New Session'}
         </h2>
         <div className="h-px bg-neutral-200 flex-1 ml-4" />
+        {/* Mode Toggle */}
+        <div className="flex items-center gap-2 ml-4 bg-white rounded-full border border-neutral-200 p-1 shadow-sm">
+          <span className="text-sm font-semibold text-neutral-800 ml-2 mr-0.5 tracking-wide">{currentT.modeLabel}</span>
+          <button
+            type="button"
+            onClick={() => { setMode('debate'); setSelectedIds(new Set(selectedIds)); setError(''); }}
+            className={`px-3 py-1.5 text-xs font-medium rounded-full transition-all ${mode === 'debate' ? 'bg-neutral-900 text-white shadow-sm' : 'text-neutral-500 hover:text-neutral-700'}`}
+          >
+            {currentT.debateMode}
+          </button>
+          <button
+            type="button"
+            onClick={() => { setMode('chat'); if (selectedIds.size > 1) { setSelectedIds(new Set([...selectedIds][0] ? [[...selectedIds][0]] : [])); } setError(''); }}
+            className={`px-3 py-1.5 text-xs font-medium rounded-full transition-all ${mode === 'chat' ? 'bg-neutral-900 text-white shadow-sm' : 'text-neutral-500 hover:text-neutral-700'}`}
+          >
+            {currentT.chatMode}
+          </button>
+        </div>
       </div>
 
       <div className="bg-white rounded-2xl shadow-sm border border-neutral-200 overflow-hidden">
@@ -695,15 +782,20 @@ export default function SetupScreen({ onStart, initialApiConfig, initialLanguage
           {/* Topic */}
           <div>
             <label className="block text-sm font-medium text-neutral-900 mb-2">
-              {currentT.topicLabel}
+              {mode === 'chat' ? currentT.chatTopicLabel : currentT.topicLabel}
             </label>
             <input
               type="text"
               value={topic}
               onChange={(e) => setTopic(e.target.value)}
-              placeholder={currentT.topicPlaceholder}
+              placeholder={mode === 'chat' ? currentT.chatTopicPlaceholder : currentT.topicPlaceholder}
               className="w-full px-4 py-3 rounded-xl border border-neutral-300 focus:ring-2 focus:ring-neutral-800 focus:border-neutral-800 outline-none transition-all text-lg"
             />
+            {mode === 'chat' && (
+              <p className="text-xs text-neutral-400 mt-1">
+                {lang === 'zh' ? '💡 留空即可与哲学家自由对话，AI 将代为开场' : '💡 Leave blank for a free-form conversation — the philosopher will start.'}
+              </p>
+            )}
           </div>
 
           {/* Philosophers Selection */}
@@ -711,7 +803,7 @@ export default function SetupScreen({ onStart, initialApiConfig, initialLanguage
             <div className="flex items-center justify-between mb-3">
               <label className="text-sm font-medium text-neutral-900 flex items-center gap-2">
                 <Users className="w-4 h-4" />
-                {currentT.inviteLabel}
+                {mode === 'chat' ? currentT.chatInviteLabel : currentT.inviteLabel}
               </label>
               <div className="flex items-center gap-3">
                 <button
@@ -721,7 +813,7 @@ export default function SetupScreen({ onStart, initialApiConfig, initialLanguage
                 >
                   {lang === 'zh' ? '高级选项 (编辑系统提示词)' : 'Advanced Options (Edit Prompts)'}
                 </button>
-                <span className="text-sm text-neutral-500">{selectedIds.size}/6</span>
+                <span className="text-sm text-neutral-500">{selectedIds.size}/{mode === 'chat' ? 1 : 6}</span>
               </div>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
@@ -877,9 +969,13 @@ export default function SetupScreen({ onStart, initialApiConfig, initialLanguage
 
           <button
             type="submit"
-            className="w-full py-4 px-6 rounded-xl bg-neutral-900 text-white font-medium text-lg hover:bg-neutral-800 active:scale-[0.98] transition-all"
+            className="w-full py-4 px-6 rounded-xl bg-neutral-900 text-white font-medium text-lg hover:bg-neutral-800 active:scale-[0.98] transition-all flex items-center justify-center gap-2"
           >
-            {currentT.startBtn}
+            {mode === 'chat' ? (
+              <><MessageCircle className="w-5 h-5" />{currentT.chatStartBtn}</>
+            ) : (
+              <><MessageSquareQuote className="w-5 h-5" />{currentT.startBtn}</>
+            )}
           </button>
         </form>
       </div>
@@ -1095,6 +1191,61 @@ export default function SetupScreen({ onStart, initialApiConfig, initialLanguage
                 >
                   {lang === 'zh' ? '保存' : 'Save'}
                 </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {isDeleteModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden"
+            >
+              <div className="p-6">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
+                    <Trash2 className="w-5 h-5 text-red-500" />
+                  </div>
+                  <h3 className="text-lg font-semibold text-neutral-900">
+                    {lang === 'zh' ? '确认注销账户' : 'Confirm Account Deletion'}
+                  </h3>
+                </div>
+                <p className="text-sm text-neutral-600 mb-2">
+                  {lang === 'zh'
+                    ? '此操作将永久删除你的账户、所有数据以及云端共享内容。该操作不可撤销。'
+                    : 'This will permanently delete your account, all data, and cloud shares. This action cannot be undone.'}
+                </p>
+                <p className="text-xs text-neutral-400 mb-6">
+                  {lang === 'zh'
+                    ? '你使用的邀请码将被释放，可供他人重新使用。'
+                    : 'Your invitation code will be released for others to use.'}
+                </p>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setIsDeleteModalOpen(false)}
+                    disabled={isDeleting}
+                    className="flex-1 px-4 py-2.5 text-sm font-medium text-neutral-700 bg-neutral-100 hover:bg-neutral-200 rounded-xl transition-colors disabled:opacity-50"
+                  >
+                    {lang === 'zh' ? '取消' : 'Cancel'}
+                  </button>
+                  <button
+                    onClick={handleDeleteAccount}
+                    disabled={isDeleting}
+                    className="flex-1 px-4 py-2.5 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-xl transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {isDeleting ? (
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <Trash2 className="w-4 h-4" />
+                    )}
+                    {isDeleting
+                      ? (lang === 'zh' ? '注销中...' : 'Deleting...')
+                      : (lang === 'zh' ? '确认注销' : 'Delete Account')}
+                  </button>
+                </div>
               </div>
             </motion.div>
           </div>
